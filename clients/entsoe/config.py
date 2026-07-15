@@ -1,0 +1,50 @@
+from quent_core.utils.eic_utils import SHORT_NAME_EIC_PAIRS
+
+# ENTSO-E area (EIC) codes for our bidding zones, sourced from quent_core's own
+# reference table (same one production uses), plus two zones missing there.
+#
+# DE uses the merged DE-LU bidding zone code ("de_lu") - the zone actually settled
+# for day-ahead prices since Oct 2018 - not SHORT_NAME_EIC_PAIRS["de"], which is
+# the older, pre-merge control-area code.
+#
+# CH and IE aren't in quent_core's table; codes below are carried over from
+# production's own area_to_entsoe_area() mapping.
+#
+# GB and IT are excluded: GB has no ENTSO-E day-ahead price coverage at all, and
+# ENTSO-E splits Italy into ~7 price sub-zones with no single EIC matching our one
+# "IT" bidding_zone.
+BIDDING_ZONE_TO_ENTSOE_AREA = {
+    "AT": SHORT_NAME_EIC_PAIRS["at"],
+    "BE": SHORT_NAME_EIC_PAIRS["be"],
+    "BG": SHORT_NAME_EIC_PAIRS["bg"],
+    "CH": "10YCH-SWISSGRIDZ",
+    "CZ": SHORT_NAME_EIC_PAIRS["cz"],
+    "DE": SHORT_NAME_EIC_PAIRS["de_lu"],
+    "DK1": SHORT_NAME_EIC_PAIRS["dk1"],
+    "DK2": SHORT_NAME_EIC_PAIRS["dk2"],
+    "EE": SHORT_NAME_EIC_PAIRS["ee"],
+    "ES": SHORT_NAME_EIC_PAIRS["es"],
+    "FI": SHORT_NAME_EIC_PAIRS["fi"],
+    "FR": SHORT_NAME_EIC_PAIRS["fr"],
+    "GR": SHORT_NAME_EIC_PAIRS["gr"],
+    "HR": SHORT_NAME_EIC_PAIRS["hr"],
+    "HU": SHORT_NAME_EIC_PAIRS["hu"],
+    "IE": "10Y1001A1001A59C",
+    "LT": SHORT_NAME_EIC_PAIRS["lt"],
+    "LV": SHORT_NAME_EIC_PAIRS["lv"],
+    "NL": SHORT_NAME_EIC_PAIRS["nl"],
+    "NO1": SHORT_NAME_EIC_PAIRS["no1"],
+    "NO2": SHORT_NAME_EIC_PAIRS["no2"],
+    "NO3": SHORT_NAME_EIC_PAIRS["no3"],
+    "NO4": SHORT_NAME_EIC_PAIRS["no4"],
+    "NO5": SHORT_NAME_EIC_PAIRS["no5"],
+    "PL": SHORT_NAME_EIC_PAIRS["pl"],
+    "PT": SHORT_NAME_EIC_PAIRS["pt"],
+    "RO": SHORT_NAME_EIC_PAIRS["ro"],
+    "SE1": SHORT_NAME_EIC_PAIRS["se1"],
+    "SE2": SHORT_NAME_EIC_PAIRS["se2"],
+    "SE3": SHORT_NAME_EIC_PAIRS["se3"],
+    "SE4": SHORT_NAME_EIC_PAIRS["se4"],
+    "SI": SHORT_NAME_EIC_PAIRS["si"],
+    "SK": SHORT_NAME_EIC_PAIRS["sk"],
+}
