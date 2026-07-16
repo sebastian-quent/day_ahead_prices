@@ -148,6 +148,7 @@ def dump(df: pd.DataFrame) -> None:
     logger.info("PriceStore.dump: wrote %d row(s) for SEMO day-ahead", written)
 
 
+# cron: */15 12-13 * * *  (CET/CEST; SEM-DA gate closure firm at 11:00 Irish time = 12:00 CET, results assumed shortly after - publish time not independently confirmed)
 @flow
 def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
     """fetch SEMO (SEM day-ahead auction) prices and dump to prod.prices.

@@ -25,7 +25,6 @@ DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/entsoe/day_ahead")
 
-# SDAC delivery days run midnight-to-midnight CET/CEST regardless of a zone's own local time
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Copenhagen")
 
 
@@ -140,10 +139,12 @@ def dump(df: pd.DataFrame) -> None:
     logger.info("PriceStore.dump: wrote %d row(s) for ENTSO-E day-ahead", written)
 
 
+# cron: */15 13-14 * * *  (CET/CEST; SDAC clears ~12:55 CET/CEST, catch-up starts 13:00)
 @flow
 def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
-    """fetch ENTSO-E day-ahead prices and dump to prod.prices.
+    """fetch ENTSO-E SDAC day-ahead prices and dump to prod.prices.
 
+    IE is excluded - separate (non-SDAC) auction, own schedule, see run_ie().
     from_date/to_date optional for historical backfill; defaults to today+tomorrow.
     """
     setup_logging()
@@ -151,9 +152,34 @@ def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) 
     from_date = from_date or today
     to_date = to_date or today + dt.timedelta(days=1)
 
-    df = fetch_and_parse(list(BIDDING_ZONE_TO_ENTSOE_AREA), from_date=from_date, to_date=to_date)
+    zones = [zone for zone in BIDDING_ZONE_TO_ENTSOE_AREA if zone != "IE"]
+    df = fetch_and_parse(zones, from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no ENTSO-E day-ahead data fetched for %s to %s", from_date, to_date)
+        return df
+
+    dump(df)
+    return df
+
+
+# cron: */15 12-13 * * *  (CET/CEST; SEM-DA gate closure firm at 11:00 Irish time = 12:00 CET, results assumed shortly after - publish time not independently confirmed)
+@flow
+def run_ie(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
+    """fetch ENTSO-E IE day-ahead prices and dump to prod.prices.
+
+    IE isn't SDAC - I-SEM's separate SEM-DA auction, separate (earlier) publish time, own
+    schedule. Split out from run() so its schedule doesn't wait on SDAC's later clearing,
+    and run() doesn't waste a call on IE while its own auction is still pending.
+    from_date/to_date optional for historical backfill; defaults to today+tomorrow.
+    """
+    setup_logging()
+    today = dt.date.today()
+    from_date = from_date or today
+    to_date = to_date or today + dt.timedelta(days=1)
+
+    df = fetch_and_parse(["IE"], from_date=from_date, to_date=to_date)
+    if df.empty:
+        logger.warning("no ENTSO-E IE day-ahead data fetched for %s to %s", from_date, to_date)
         return df
 
     dump(df)

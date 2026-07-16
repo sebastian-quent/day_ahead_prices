@@ -209,10 +209,12 @@ def dump(df: pd.DataFrame) -> None:
     logger.info("PriceStore.dump: wrote %d row(s) for EPEX day-ahead", written)
 
 
+# cron: */15 13-14 * * *  (CET/CEST; SDAC clears ~12:55 CET/CEST, catch-up starts 13:00)
 @flow
 def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
-    """fetch EPEX day-ahead prices and dump to prod.prices.
+    """fetch EPEX SDAC day-ahead prices and dump to prod.prices.
 
+    GB is excluded - separate (non-SDAC) auction, own schedule, see run_gb().
     from_date/to_date optional for historical backfill; defaults to today+tomorrow.
     """
     setup_logging()
@@ -220,9 +222,38 @@ def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) 
     from_date = from_date or today
     to_date = to_date or today + dt.timedelta(days=1)
 
-    df = fetch_and_parse(list(ZONE_FILE_CONFIG), from_date=from_date, to_date=to_date)
+    zones = [zone for zone in ZONE_FILE_CONFIG if zone != "GB"]
+    df = fetch_and_parse(zones, from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no EPEX day-ahead data fetched for %s to %s", from_date, to_date)
+        return df
+
+    dump(df)
+    return df
+
+
+# fetches both Hourly (N2EX-equivalent) and HalfHourly GB markets - needs two catch-up schedules, not one.
+# Prefect runs in CET/CEST, so these are written in CET/CEST wall-clock, not UK local time:
+# cron (Hourly):     */15 11-12 * * *  (CET/CEST; UK gate closure 09:50 / results by 10:00 UK = 10:50/11:00 CET)
+# cron (HalfHourly): */15 15-16 * * *  (CET/CEST; UK gate closure 14:30 UK = 15:30 CET, results shortly after)
+# NB: assumes UK and EU keep changing clocks on the same date - if that ever diverges, these drift by up to a week around the transition
+@flow
+def run_gb(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
+    """fetch EPEX GB day-ahead prices and dump to prod.prices.
+
+    GB isn't in SDAC - separate auction, separate (earlier) publish time, own schedule.
+    Split out from run() so its schedule doesn't wait on SDAC's later clearing, and run()
+    doesn't waste a call on GB while its own auction is still pending.
+    from_date/to_date optional for historical backfill; defaults to today+tomorrow.
+    """
+    setup_logging()
+    today = dt.date.today()
+    from_date = from_date or today
+    to_date = to_date or today + dt.timedelta(days=1)
+
+    df = fetch_and_parse(["GB"], from_date=from_date, to_date=to_date)
+    if df.empty:
+        logger.warning("no EPEX GB day-ahead data fetched for %s to %s", from_date, to_date)
         return df
 
     dump(df)

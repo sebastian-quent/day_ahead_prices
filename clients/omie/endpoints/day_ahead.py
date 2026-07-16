@@ -126,6 +126,7 @@ def dump(df: pd.DataFrame) -> None:
     logger.info("PriceStore.dump: wrote %d row(s) for OMIE day-ahead", written)
 
 
+# cron: */15 13-14 * * *  (CET/CEST; SDAC clears ~12:55 CET/CEST, catch-up starts 13:00)
 @flow
 def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
     """fetch OMIE (MIBEL day-ahead auction) prices for ES and PT and dump to prod.prices.

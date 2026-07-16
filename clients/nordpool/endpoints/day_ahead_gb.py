@@ -18,7 +18,7 @@ SOURCE = "Nord Pool"
 PRODUCT = "DAY_AHEAD"
 BIDDING_ZONE = "GB"
 NORDPOOL_AREA = "UK"
-MARKETS = ["N2EX", "HalfHourly"]
+MARKETS = ["N2EX_DayAhead", "GbHalfHour_DayAhead"]
 
 OUTPUT_DIR = Path("output/nordpool/day_ahead_gb")
 
@@ -92,6 +92,11 @@ def dump(df: pd.DataFrame) -> None:
     logger.info("PriceStore.dump: wrote %d row(s) for Nord Pool GB day-ahead", written)
 
 
+# fetches both N2EX (hourly) and HalfHourly GB markets - needs two catch-up schedules, not one.
+# Prefect runs in CET/CEST, so these are written in CET/CEST wall-clock, not UK local time:
+# cron (N2EX):       */15 11-12 * * *  (CET/CEST; UK gate closure 09:50 / results by 10:00 UK = 10:50/11:00 CET)
+# cron (HalfHourly): */15 15-16 * * *  (CET/CEST; UK gate closure 14:30 UK = 15:30 CET, results shortly after)
+# NB: assumes UK and EU keep changing clocks on the same date - if that ever diverges, these drift by up to a week around the transition
 @flow
 def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
     """fetch Nord Pool GB day-ahead prices and dump to prod.prices.
