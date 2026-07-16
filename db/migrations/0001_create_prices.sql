@@ -1,11 +1,10 @@
--- creates the live prices table. currently targets test.prices; rename to prod.prices
--- at go-live (see "Until prod.prices exists" in CLAUDE.md).
+-- creates the live prices table, prod.prices.
 -- free-text bidding_zone/product/market/source per project-overview.md Resolved Decisions
 -- (no FK/dimension tables -- see id-tables-design.drawio, archived as a future idea).
 
-create schema if not exists test;
+create schema if not exists prod;
 
-create table test.prices (
+create table prod.prices (
     valuetime     timestamptz     not null,
     forecasttime  timestamptz     not null,
     bidding_zone  varchar(20)     not null,

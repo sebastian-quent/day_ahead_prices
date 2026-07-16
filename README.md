@@ -26,10 +26,6 @@ Target table: `prod.prices`, keyed on
 `valuetime, forecasttime, bidding_zone, product, market, source`. See
 `project-overview.md` for the full schema and column descriptions.
 
-Until `prod.prices` is live, each endpoint's `dump()` writes a local CSV per
-bidding zone instead, but is named/structured exactly as the eventual DB
-write so swapping it in later is a one-line change.
-
 ## Status
 
 See `project-overview.md` for full scope, architecture, current

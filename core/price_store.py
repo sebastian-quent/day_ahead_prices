@@ -7,7 +7,7 @@ from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
-TABLE = "test.prices"
+TABLE = "prod.prices"
 PRIMARY_KEY = ["valuetime", "forecasttime", "bidding_zone", "product", "market", "source"]
 KEY_COLUMNS = ["valuetime", "bidding_zone", "product", "market", "source"]  # PK minus forecasttime
 VALUE_COLUMNS = ["resolution", "currency", "price"]

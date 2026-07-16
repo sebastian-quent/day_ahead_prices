@@ -88,7 +88,7 @@ def fetch_and_parse(from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
 
 
 def dump(df: pd.DataFrame) -> None:
-    """write GB day-ahead prices to prod.prices via PriceStore, plus a local CSV per market for cross-checking."""
+    """write GB day-ahead prices to prod.prices via PriceStore."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     for market, market_df in df.groupby("market"):
         market_df.to_csv(OUTPUT_DIR / f"{market}.csv", index=False)

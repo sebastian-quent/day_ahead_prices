@@ -147,7 +147,7 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
-# local placeholder CSV dumps (until prod.prices exists)
+# local debug CSV dumps, not carried into production
 output/
 
 # Environments
