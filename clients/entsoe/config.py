@@ -1,18 +1,8 @@
 from quent_core.utils.eic_utils import SHORT_NAME_EIC_PAIRS
 
 # ENTSO-E area (EIC) codes for our bidding zones, sourced from quent_core's own
-# reference table (same one production uses), plus two zones missing there.
-#
-# DE uses the merged DE-LU bidding zone code ("de_lu") - the zone actually settled
-# for day-ahead prices since Oct 2018 - not SHORT_NAME_EIC_PAIRS["de"], which is
-# the older, pre-merge control-area code.
-#
-# CH and IE aren't in quent_core's table; codes below are carried over from
-# production's own area_to_entsoe_area() mapping.
-#
-# GB and IT are excluded: GB has no ENTSO-E day-ahead price coverage at all, and
-# ENTSO-E splits Italy into ~7 price sub-zones with no single EIC matching our one
-# "IT" bidding_zone.
+# reference table, plus two zones currently missing there.
+
 BIDDING_ZONE_TO_ENTSOE_AREA = {
     "AT": SHORT_NAME_EIC_PAIRS["at"],
     "BE": SHORT_NAME_EIC_PAIRS["be"],

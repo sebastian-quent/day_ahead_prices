@@ -18,11 +18,6 @@ SOURCE = "Nord Pool"
 PRODUCT = "DAY_AHEAD"
 BIDDING_ZONE = "GB"
 NORDPOOL_AREA = "UK"
-
-# GB runs two separate, currently-live day-ahead auctions on Nord Pool - not a
-# single SDAC-style market like the other zones in day_ahead.py - so both are
-# landed as distinct `market` rows for the same bidding_zone (same pattern as
-# AT's SDAC + EXAA_EARLY).
 MARKETS = ["N2EX", "HalfHourly"]
 
 OUTPUT_DIR = Path("output/nordpool/day_ahead_gb")

@@ -18,12 +18,6 @@ SOURCE = "OKTE"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
 BIDDING_ZONE = "SK"
-# DAM results' `price` field is documented as EUR/MWh with no currency field to read
-# instead, same situation as OTE/OPCOM. Cross-checked live 2026-07-16: SK's period-1
-# price for delivery date 2026-07-15 (158.34) matches OPCOM's RO Pos=1 price for the
-# same date exactly - SK/CZ/HU/RO clear on the same 4M Market Coupling price, so this
-# also confirms the parsing (`priceRo`/`priceHu`/`priceCz` in the response are null in
-# every observed response and appear unused - not read here).
 DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/okte/day_ahead")
@@ -41,14 +35,7 @@ def fetch_day_ahead_prices(from_date: dt.date, to_date: dt.date) -> Optional[lis
 
 
 def parse_response(items: list, forecasttime: pd.Timestamp) -> pd.DataFrame:
-    """parse OKTE DAM results into prod.prices-shaped rows for SK.
-
-    unlike OTE/OPCOM/OMIE, OKTE's `deliveryStart`/`deliveryEnd` are already full UTC
-    timestamps in the response, so valuetime and per-row resolution both fall out
-    directly from the two fields - no local-time day-boundary math needed here, and
-    DST transition days (23/25h) and the hourly-to-15-min switchover both fall out
-    correctly without any special-casing.
-    """
+    """parse OKTE DAM results into prod.prices-shaped rows for SK."""
     rows = []
     for item in items:
         delivery_start = pd.Timestamp(item["deliveryStart"])

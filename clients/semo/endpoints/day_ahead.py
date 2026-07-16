@@ -18,18 +18,14 @@ price_store = PriceStore(engine)
 
 SOURCE = "SEMO"
 PRODUCT = "DAY_AHEAD"
-MARKET = "SDAC"  # SEM-DA runs under the "PWR-MRC-D+1" multi-regional coupling auction, the same coupled algorithm ENTSO-E's IE feed already reports as SDAC
+MARKET = "SDAC"
 BIDDING_ZONE = "IE"
-DEFAULT_CURRENCY = "EUR"  # the auction's native clearing currency; GBP is only published as an FX-converted reference series
+DEFAULT_CURRENCY = "EUR"
 
-REPORT_ID = "EA-001"  # DPuG_ID shared by all SEMO "Market Results" auction reports (DA + IDA1-3); filtered down to SEM-DA below
+REPORT_ID = "EA-001"
 RESOURCE_PREFIX = "MarketResult_SEM-DA_"
 DELIVERY_MARKET = "ROI-DA"  # the all-island SEM-DA auction publishes identical NI-DA/ROI-DA prices under separate sections; ROI-DA maps to bidding_zone IE
 
-# SEM-DA is coupled via MRC/SDAC alongside the rest of Europe, so - like every other SDAC
-# zone in this repo - its delivery day runs midnight-to-midnight CET/CEST, not Irish local
-# time; confirmed live (2026-07-15) against a document's own valuetimes, which start/end on
-# the CEST day boundary rather than Ireland's UTC/UTC+1 one
 
 OUTPUT_DIR = Path("output/semo/day_ahead")
 

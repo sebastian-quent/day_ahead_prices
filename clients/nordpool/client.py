@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://dataportal-api.nordpoolgroup.com/api"
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
 

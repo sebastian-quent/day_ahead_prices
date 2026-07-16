@@ -8,15 +8,14 @@ logger = logging.getLogger(__name__)
 
 HOST = "https://isot.okte.sk/api/v1"
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
 
 def fetch(path: str, params: dict, timeout: int = 30) -> Optional[list]:
     """GET one OKTE ISOT REST endpoint, shared by all endpoints/*.py modules.
 
-    public, unauthenticated API - no key/header needed (confirmed live with a plain
-    default-UA request, unlike OPCOM's WAF). returns the response parsed as JSON, or
+    public, unauthenticated API. returns the response parsed as JSON, or
     None if the request failed after retrying once. a query with no published data for
     the range still comes back HTTP 200 with an empty list rather than an error.
     """

@@ -23,9 +23,6 @@ DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/epex/day_ahead")
 
-# every EPEX zone file - including GB's - uses this CET/CEST-based delivery-day and hour
-# grid, confirmed by comparing spring-forward-day null patterns between GB and a CET zone
-# (both drop "Hour 3A"/"Hour 3B" and keep "Hour 2", not the UK's own local 1am DST slot)
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Copenhagen")
 
 
@@ -36,12 +33,10 @@ class ZoneFile(NamedTuple):
     market: str = "SDAC"  # GB isn't in SDAC - its two EPEX auctions need their own codes
 
 
-# per-zone SFTP file layout, ported from production's epex_auction_prices.py curves_upload.
+# per-zone SFTP file layout.
 # path is derived by _remote_path(): resolution decides the period folder and filename
 # convention (EPEX isn't consistent across resolutions - 15-min uses an "_15" filename
 # infix, GB's half-hourly uses an "hh_" prefix instead), year decides Current vs Historical.
-# most zones publish a single file; GB publishes two independent auctions (same pattern as
-# Nord Pool's day_ahead_gb.py) so it gets a list of two ZoneFiles instead of one.
 ZONE_FILE_CONFIG = {
     "AT": [ZoneFile("austria", "austria", 15)],
     "BE": [ZoneFile("belgium", "belgium", 15)],
@@ -50,8 +45,6 @@ ZONE_FILE_CONFIG = {
     "FI": [ZoneFile("finland", "finland", 15)],
     "FR": [ZoneFile("france", "france", 15)],
     "DE": [ZoneFile("germany", "germany_luxembourg", 15)],
-    # market codes matched exactly to clients/nordpool/endpoints/day_ahead_gb.py's MARKETS,
-    # since both sources redistribute the same two underlying GB auctions
     "GB": [
         ZoneFile("great-britain", "great-britain", 60, market="Hourly"),
         ZoneFile("great-britain", "great-britain", 30, market="HalfHourly"),

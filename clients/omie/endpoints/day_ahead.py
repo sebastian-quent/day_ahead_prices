@@ -18,7 +18,7 @@ price_store = PriceStore(engine)
 SOURCE = "OMIE"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
-DEFAULT_CURRENCY = "EUR"  # both ES and PT settle the MIBEL day-ahead auction in EUR
+DEFAULT_CURRENCY = "EUR"
 
 REALDIR = "marginalpdbcpt"
 DIR_LABEL = " Day-ahead market hourly price in Portugal"
@@ -26,20 +26,9 @@ PARENTS = "/Day-ahead Market/1. Prices"
 
 # marginalpdbcpt carries the joint MIBEL auction result: column index 4 (0-based) is
 # Spain's clearing price, column 5 is Portugal's - identical whenever the interconnector
-# isn't congested, but they diverge during congestion (confirmed live, e.g. 2025-06-15
-# delivery hours 9-18 priced ES and PT differently), so both are always parsed as
-# distinct rows rather than assuming one column stands in for the other.
+# isn't congested, but they diverge during congestion
 PRICE_COLUMN_TO_ZONE = {4: "ES", 5: "PT"}
 
-# MIBEL's auction delivery day runs midnight-to-midnight CET/CEST even for Portugal,
-# which otherwise observes WET/WEST (UTC+0/+1) as its own civil time - same "auction
-# time, not zone time" rule already documented for AT/EXAA, CZ/OTE, and IE/SEMO
-# elsewhere in this repo. NOT live-cross-checked against ENTSO-E's PT feed this session
-# (every endpoint module transitively imports Database.db_connect, which needs DB
-# secrets this environment's config.yaml resolution couldn't reach) - going ahead on
-# the strength of that in-repo precedent plus the fact that ES/PT share one file with a
-# single period-index column, so a per-country day-boundary offset isn't representable
-# in the format at all. Flagging as unverified rather than asserting it as confirmed.
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Madrid")
 
 OUTPUT_DIR = Path("output/omie/day_ahead")
@@ -58,9 +47,7 @@ def parse_file(content: bytes, date: dt.date, forecasttime: pd.Timestamp) -> pd.
     "year;month;day;period;price_es;price_pt;" row per delivery period, terminated by a
     bare "*" line - both header and terminator are skipped by the row-shape check below.
     resolution is derived from the actual number of periods in the file against the true
-    CET/CEST UTC span of the delivery day (same approach as ENTSO-E/OTE), so DST
-    transition days (23/25h) and the Oct-2025 hourly->15-min switchover both fall out
-    correctly without any special-casing.
+    CET/CEST UTC span of the delivery day
     """
     rows_raw = []
     for line in content.decode("latin-1").splitlines():
@@ -144,10 +131,6 @@ def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) 
     """fetch OMIE (MIBEL day-ahead auction) prices for ES and PT and dump to prod.prices.
 
     from_date/to_date optional for historical backfill; defaults to today+tomorrow.
-    note: OMIE's file-access-list only lists daily files back to 2023-01-01; older
-    history exists only as yearly zip archives (marginalpdbcpt_2018.zip ... 2022.zip)
-    which aren't wired up here - out of scope until the deferred iteration-1 backfill
-    decision is made, same as OTE's un-wired legacy hourly endpoint.
     """
     setup_logging()
     today = dt.date.today()

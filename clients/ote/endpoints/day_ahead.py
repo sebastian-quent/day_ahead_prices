@@ -19,17 +19,13 @@ SOURCE = "OTE"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
 BIDDING_ZONE = "CZ"
-DEFAULT_CURRENCY = "EUR"  # GetDamPricePeriodE has no currency field/InEur param, unlike the legacy GetDamPriceE - CZ's SDAC clearing price is EUR-native so there is nothing else to read
+DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/ote/day_ahead")
 
-# request the finest resolution OTE publishes; the response's own PeriodResolution
-# still drives the stored `resolution` value below rather than this constant, in
-# case OTE ever answers with something coarser
 REQUEST_RESOLUTION = "PT15M"
 RESOLUTION_MINUTES = {"PT15M": 15, "PT30M": 30, "PT60M": 60}
 
-# SDAC delivery days run midnight-to-midnight CET/CEST regardless of a zone's own local time
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Prague")
 
 

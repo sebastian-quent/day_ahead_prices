@@ -10,11 +10,10 @@ logger = logging.getLogger(__name__)
 HOST = "https://www.opcom.ro"
 EXPORT_XML_URL = f"{HOST}/rapoarte-pzu-raportMarketResults-export-xml/{{day}}/{{month}}/{{year}}/en"
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
-# opcom.ro's WAF 403s the literal "python-requests" default User-Agent (confirmed live:
-# curl with no UA and with a browser UA both get 200, python-requests' default gets 403) -
+# opcom.ro's WAF 403s the literal "python-requests" default User-Agent -
 # any non-default UA clears it, this isn't a real auth wall.
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 

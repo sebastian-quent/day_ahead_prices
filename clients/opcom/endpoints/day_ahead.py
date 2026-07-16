@@ -20,16 +20,10 @@ SOURCE = "OPCOM"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
 BIDDING_ZONE = "RO"
-DEFAULT_CURRENCY = "EUR"  # PriceRO is published in EUR/MWh, no currency field in the response to read instead
+DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/opcom/day_ahead")
 
-# Romania's own civil time is EET/EEST, but - like every other SDAC zone in this repo -
-# the PZU delivery day runs midnight-to-midnight CET/CEST, not local time. Live-confirmed
-# 2026-07-16: OPCOM's Pos=1 price for delivery date 2026-07-15 (158.34) matched ENTSO-E's
-# RO position=1 price for the same date exactly, where ENTSO-E's period start was
-# 2026-07-14T22:00Z (CEST midnight) - an EET/EEST boundary would have been one hour
-# (4 quarter-hour positions) earlier and produced a different Pos=1 price.
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Copenhagen")
 
 
@@ -44,12 +38,8 @@ def parse_response(raw: bytes, date: dt.date, forecasttime: pd.Timestamp) -> pd.
 
     the response has no per-row timestamp, just a 1-based `Pos` sequence number -
     resolution is derived from the actual number of `Detail` entries against the true
-    CET/CEST UTC span of the delivery day (same approach as ENTSO-E/OTE/OMIE), so DST
-    transition days (23/25h) and the 2025 hourly->15-min switchover both fall out
-    correctly without any special-casing. Prices are comma-thousands-formatted above
-    999 on this site (confirmed live on other numeric fields in the same document, e.g.
-    "2,701.0"), so commas are stripped before the float conversion even though no live
-    PriceRO value above 999 has been observed yet.
+    CET/CEST UTC span of the delivery day. Prices are comma-thousands-formatted above
+    999 on this site
     """
     document = xmltodict.parse(raw)
     details = document.get("resultset", {}).get("Detail") or []

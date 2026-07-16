@@ -9,7 +9,7 @@ from quent_core.utils.settings import load_setting
 
 logger = logging.getLogger(__name__)
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
 

@@ -14,7 +14,7 @@ HOST = "https://www.omie.es"
 LIST_URL = f"{HOST}/en/file-access-list"
 DOWNLOAD_URL = f"{HOST}/en/file-download"
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2 
 RETRY_BACKOFF_SECONDS = 10
 
 
@@ -25,7 +25,7 @@ def _filename_pattern(realdir: str) -> re.Pattern:
 def _get(url: str, params: dict, timeout: int = 30) -> Optional[requests.Response]:
     """GET with one retry on failure, shared by list_files and download_file.
 
-    public, unauthenticated file browser - no auth to add here.
+    public, unauthenticated file browser.
     """
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
@@ -48,9 +48,8 @@ def _get(url: str, params: dict, timeout: int = 30) -> Optional[requests.Respons
 def list_files(realdir: str, dir_label: str, parents: str) -> Optional[dict[dt.date, tuple[str, pd.Timestamp]]]:
     """list published files for one OMIE file-access directory, keyed by delivery date.
 
-    reused by every endpoint that reads published daily files (day-ahead today,
-    others later) - shared here rather than per-endpoint, same shape as
-    clients/semo/client.py's list_documents.
+    reused by every endpoint that reads published daily files - shared here
+    rather than per-endpoint, same shape as clients/semo/client.py's list_documents.
 
     OMIE republishes corrected files under an incremented version suffix
     (marginalpdbcpt_20230121.3 superseding .1/.2) - the file-access-list page

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 WSDL = "https://www.ote-cr.cz/services/PublicDataService?wsdl"
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
 

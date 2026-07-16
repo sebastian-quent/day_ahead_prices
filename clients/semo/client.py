@@ -10,7 +10,7 @@ HOST = "https://reports.semopx.com"
 DOCUMENTS_LIST_URL = f"{HOST}/api/v1/documents/static-reports"
 DOCUMENT_DOWNLOAD_BASE = f"{HOST}/documents"
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
 MAX_PAGES = 50  # safety cap; SEMO's static-reports listing is paginated

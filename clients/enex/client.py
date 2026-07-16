@@ -22,7 +22,7 @@ PORTLET_INSTANCE = "com_liferay_asset_publisher_web_portlet_AssetPublisherPortle
 ENTRIES_PER_PAGE = 7  # the portlet ignores a `_delta=` override in the URL (confirmed live), always 7/page
 MAX_PAGES = 6  # ~6 weeks back - covers today/tomorrow with headroom, bounds the walk if an old date is requested
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
 _TITLE_PATTERN = re.compile(r"(\d{8})_EL-DAM_Results_EN_v\d+")
@@ -32,8 +32,7 @@ _UUID_PATTERN = re.compile(r"uuid=([a-f0-9-]+)")
 def _get(url: str, params: Optional[dict] = None, timeout: int = 30) -> Optional[requests.Response]:
     """GET with one retry on failure, shared by list_files and download_file.
 
-    public, unauthenticated Liferay site - no auth/UA workaround needed (confirmed live
-    with a plain default-UA request, unlike OPCOM's WAF).
+    public, unauthenticated Liferay site - no auth/UA workaround needed
     """
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:

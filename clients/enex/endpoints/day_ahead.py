@@ -20,23 +20,10 @@ SOURCE = "ENEX"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
 BIDDING_ZONE = "GR"
-# MCP has no currency field in the file - HEnEx's EL-DAM clears in EUR (confirmed live
-# 2026-07-16: MCP for every quarter-hour of delivery date 2026-07-16 matches ENTSO-E's
-# own GR feed for the same date to the cent, which reports EUR).
 DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/enex/day_ahead")
 
-# the Results file's DELIVERY_MTU column looks like Greek local wall-clock (it runs
-# 00:00:00 to 23:45:00 for DDAY) but isn't - live cross-check 2026-07-16 against
-# ENTSO-E's own GR feed for delivery date 2026-07-16 confirmed DELIVERY_MTU is CET/CEST,
-# not Athens' own EET/EEST civil time: all 96 quarter-hours matched exactly on both
-# valuetime and price once DELIVERY_MTU was localized as CET/CEST - same "auction time,
-# not zone time" rule as AT/EXAA, CZ/OTE, IE/SEMO, RO/OPCOM, ES+PT/OMIE. Rather than
-# parse DELIVERY_MTU's wall-clock string directly (ambiguous on a fall-back DST day),
-# valuetime is reconstructed from the file's own 1-based SORT position against this true
-# UTC day span, same position-based approach as OPCOM/OMIE - sidesteps the ambiguity
-# entirely and falls out correctly on DST transition days without special-casing.
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Copenhagen")
 
 

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 HOST = "sftp.marketdata.epexspot.com"
 PORT = 22
 
-RETRY_ATTEMPTS = 2  # 1 initial try + 1 retry
+RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
 
 _sftp: Optional[paramiko.SFTPClient] = None
@@ -24,8 +24,7 @@ def _get_credentials() -> dict:
 
 
 def get_connection() -> paramiko.SFTPClient:
-    """shared SFTP connection, reused across calls instead of reconnecting per file -
-    this login is also used in production, so keep connection churn to a minimum."""
+    """shared SFTP connection, reused across calls instead of reconnecting per file"""
     global _sftp
     if _sftp is not None:
         try:
