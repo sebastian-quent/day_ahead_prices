@@ -1,9 +1,12 @@
+import asyncio
 import logging
 from typing import Optional
 
 import pandas as pd
 from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Engine
+
+from core.streaming import publish_events
 
 logger = logging.getLogger(__name__)
 
@@ -55,16 +58,22 @@ class PriceStore:
     own connection, e.g. `PriceStore(engine)` with `from Database.db_connect import engine`.
     """
 
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, publish: bool = True):
         self.engine = engine
+        self._publish_default = publish
 
-    def dump(self, df: pd.DataFrame) -> int:
-        """insert new/changed price rows into prod.prices.
+    def dump(self, df: pd.DataFrame, publish: Optional[bool] = None) -> int:
+        """insert new/changed price rows into prod.prices, then publish them to quent-data-stream.
 
         looks up the latest known price per key with a single query (not one query per
         row), keeps only rows that are new or whose price differs from that known value,
         then inserts them chunked so one failing chunk is logged and skipped instead of
         rolling back the whole batch. returns the number of rows written.
+
+        only rows that actually committed to the DB are published (never a chunk that
+        raised). `publish` overrides the instance's default for this call - e.g. a future
+        historical backfill can pass publish=False so it doesn't replay old rows onto the
+        live stream. a NATS outage is caught and logged, never fails the DB write above it.
         """
         if df.empty:
             return 0
@@ -89,12 +98,14 @@ class PriceStore:
             return 0
 
         written = 0
+        written_chunks: list[pd.DataFrame] = []
         for start in range(0, len(to_write), CHUNK_SIZE):
             chunk = to_write.iloc[start : start + CHUNK_SIZE]
             try:
                 with self.engine.begin() as conn:
                     conn.execute(_INSERT_SQL, chunk.to_dict(orient="records"))
                 written += len(chunk)
+                written_chunks.append(chunk)
             except Exception:
                 logger.error(
                     "PriceStore.dump: failed to write rows %d-%d (source=%s, bidding_zone=%s)",
@@ -104,7 +115,28 @@ class PriceStore:
                     sorted(chunk["bidding_zone"].unique()),
                     exc_info=True,
                 )
+
+        should_publish = self._publish_default if publish is None else publish
+        if should_publish and written_chunks:
+            self._publish(pd.concat(written_chunks, ignore_index=True))
+
         return written
+
+    def _publish(self, written: pd.DataFrame) -> None:
+        """publish written rows to quent-data-stream, one product group (=one subject) at a time.
+
+        each group is isolated so a failure publishing one product doesn't block another.
+        """
+        for product, group in written.groupby("product"):
+            try:
+                asyncio.run(publish_events(group, logger))
+            except Exception:
+                logger.error(
+                    "PriceStore.dump: failed to publish %d row(s) for product=%s to quent-data-stream",
+                    len(group),
+                    product,
+                    exc_info=True,
+                )
 
     def _changed_rows(self, df: pd.DataFrame) -> pd.DataFrame:
         """rows in df that are new or whose price differs from the latest known value."""

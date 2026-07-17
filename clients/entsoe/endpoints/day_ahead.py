@@ -145,12 +145,12 @@ def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) 
     """fetch ENTSO-E SDAC day-ahead prices and dump to prod.prices.
 
     IE is excluded - separate (non-SDAC) auction, own schedule, see run_ie().
-    from_date/to_date optional for historical backfill; defaults to today+tomorrow.
+    from_date/to_date optional for historical backfill; defaults to tomorrow only.
     """
     setup_logging()
-    today = dt.date.today()
-    from_date = from_date or today
-    to_date = to_date or today + dt.timedelta(days=1)
+    tomorrow = dt.date.today() + dt.timedelta(days=1)
+    from_date = from_date or tomorrow
+    to_date = to_date or tomorrow
 
     zones = [zone for zone in BIDDING_ZONE_TO_ENTSOE_AREA if zone != "IE"]
     df = fetch_and_parse(zones, from_date=from_date, to_date=to_date)
@@ -170,12 +170,12 @@ def run_ie(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = Non
     IE isn't SDAC - I-SEM's separate SEM-DA auction, separate (earlier) publish time, own
     schedule. Split out from run() so its schedule doesn't wait on SDAC's later clearing,
     and run() doesn't waste a call on IE while its own auction is still pending.
-    from_date/to_date optional for historical backfill; defaults to today+tomorrow.
+    from_date/to_date optional for historical backfill; defaults to tomorrow only.
     """
     setup_logging()
-    today = dt.date.today()
-    from_date = from_date or today
-    to_date = to_date or today + dt.timedelta(days=1)
+    tomorrow = dt.date.today() + dt.timedelta(days=1)
+    from_date = from_date or tomorrow
+    to_date = to_date or tomorrow
 
     df = fetch_and_parse(["IE"], from_date=from_date, to_date=to_date)
     if df.empty:

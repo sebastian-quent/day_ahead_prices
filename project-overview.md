@@ -10,7 +10,6 @@ Redundancy requirement: at least **two independent sources per bidding zone**, s
 
 - In scope: day-ahead auction prices (`DAY_AHEAD`), all bidding zones listed below, historical backfill, Prefect-scheduled runs with logging.
 - Later, not now: intraday (`INTRADAY`) scrapers. Schema already supports it (see Data model).
-- Later, not now: direct NATS publishing alongside the DB write.
 - Out of scope: anything not price-related (volumes, nominations, flows, imbalance prices) — stays in existing scraper setups.
 
 ## Architecture
@@ -22,8 +21,19 @@ Redundancy requirement: at least **two independent sources per bidding zone**, s
   - `config.py` — source-specific config/secrets.
   - `endpoints/<endpoint>.py` — fetch, parse, dump per endpoint. Also hosts the `@flow`-decorated `run()`, with backfill exposed via an optional date/range param.
 - **Prefect**: `@flow` sits directly on each endpoint's `run()`. Logs go to Prefect so failures are visible without digging through server logs.
-- **Storage**: writes directly to Postgres via `core.PriceStore`. Built so NATS publishing (matching the Empire pattern) can be added alongside the DB write later without restructuring.
+- **Storage**: writes directly to Postgres via `core.PriceStore`, which also publishes every written row to `quent-data-stream` (see Streaming below).
 - **DB engine**: `from Database.db_connect import engine` — same shared engine as `ImbalancePriceHandler`. `core.PriceStore` takes this as a constructor arg rather than building its own connection.
+
+## Streaming (quent-data-stream)
+
+`core/streaming.py` publishes every row `PriceStore.dump()` writes to Postgres onto a NATS stream, so the data is trivially accessible to any future consumer — how anything consumes it is deliberately not decided yet (out of scope, see Scope).
+
+- **Producer only**: publishes via `quent_core.streaming`, doesn't touch the `quent-data-stream` gateway repo itself.
+- **Stream**: own dedicated JetStream stream, named **`PRICES`**. Not scoped to "auction" or "day-ahead" in the name because `product`/`market` already carry the day-ahead-vs-intraday and auction-vs-continuous distinctions per-event, and `INTRADAY` will land on the same stream later. Known tradeoff, accepted: this data is **not** reachable via the gateway's `/replay`, `/ws`, `/hybrid` routes unless/until the gateway is separately updated to also watch `PRICES` — consumers need a direct NATS/JetStream connection for now. Created on first publish by `quent_core.streaming.ensure_stream()`, which only sets `name`+`subjects` (no explicit retention/duplicate_window/storage config) — so the stream runs on whatever `nats-py`/JetStream server defaults apply.
+- **Subject**: one subject per `product`, not per source/zone — `prices.<product>.updates`, e.g. `prices.day_ahead.updates` today. `INTRADAY` gets its own subject automatically later, no code change needed. Consumers filter by zone/source/market client-side via the event's `data` fields. `NatsConfig.stream_subjects` is set to `prices.>` (a wildcard) precisely because `ensure_stream()` only applies the subjects list passed on first creation — a non-wildcard would have locked the stream to whichever product published first.
+- **Connection**: same shared endpoint/certs as the Empire producer (`tls://192.168.1.202:4222`) — team-shared infra, not machine-specific.
+- **Integration point**: centralized in `PriceStore.dump()`, not duplicated per endpoint — every `clients/*/endpoints/day_ahead*.py` file publishes "for free" with no changes of its own. `PriceStore(engine, publish=False)` (constructor) or `price_store.dump(df, publish=False)` (per call) disable it — e.g. for local/dev work or a historical backfill that shouldn't replay old rows onto the live stream. Only rows that actually committed to Postgres are published; a NATS outage is caught and logged, never fails the DB write.
+- **Dedup key**: `core/streaming.py` defines its own `build_msg_id()`, building the full natural key (`subject:valuetime:bidding_zone:product:market:source` — the same columns as `PriceStore.KEY_COLUMNS` plus `product`), because one shared subject per product means many rows (different zone/source/market) share subject+valuetime within the same `dump()` batch — anything coarser would collide under any nonzero `duplicate_window`. Publishing goes through `EventPublisher(nats_cfg, logger)` (`connect()` / `publish_many()` / `close()`), always passing this explicit `msg_id`.
 
 ## Data model
 
@@ -51,7 +61,7 @@ Table: **`prod.prices`**.
 
 ## Countries / sources / bidding zones
 
-Tracks **implementation status**, not just source availability — ✓ means the zone is wired up and landing rows in `prod.prices` today. Verified 2026-07-15 by reading each client's zone config directly (`clients/nordpool/config.py` + `day_ahead_gb.py`, `clients/epex/endpoints/day_ahead.py`'s `ZONE_FILE_CONFIG`, `clients/entsoe/config.py`).
+Tracks **implementation status**, not just source availability — ✓ means the zone is wired up and landing rows in `prod.prices` today.
 
 Legend: **✓** implemented and landing data · **○** source could cover this zone but isn't built · **–** not applicable
 
@@ -108,46 +118,43 @@ One entry per source, checked off once it's actually landing rows live (not just
 
 **Nordpool**
 - [x] client + day-ahead endpoint — `clients/nordpool/`, live to `prod.prices`; full 22-zone `BIDDING_ZONE_TO_NORDPOOL_AREA` mapping active.
-- [x] GB day-ahead endpoint — `clients/nordpool/endpoints/day_ahead_gb.py`. GB isn't part of Nordpool's SDAC batch call, so it's a separate endpoint hitting two Nord Pool markets (`N2EX_DayAhead` hourly + `GbHalfHour_DayAhead` half-hourly), landed as two `market` rows for `bidding_zone=GB`; currency read off the response. Verified live 2026-07-15: 96 rows written.
-- [x] Bug found and fixed 2026-07-16: `MARKETS` was `["N2EX", "HalfHourly"]` — those short labels aren't valid Nord Pool API `market` values (`400 Bad Request`, confirmed via direct API probe), so every run since whenever this regressed was silently landing 0 rows despite `run()` completing without error. Corrected to the real API codes `N2EX_DayAhead`/`GbHalfHour_DayAhead` (matching the resolved-decision table below, which already had the right names). Re-verified live 2026-07-16: 144 rows written (48 N2EX_DayAhead + 96 GbHalfHour_DayAhead).
-- [x] Smoke-tested 2025-11-15 (both endpoints) — failed `401 Unauthorized`; source-side rolling ~2-month window, not a parsing bug (see Known gaps).
+- [x] GB day-ahead endpoint — `clients/nordpool/endpoints/day_ahead_gb.py`. GB isn't part of Nordpool's SDAC batch call, so it's a separate endpoint hitting two Nord Pool markets (`N2EX_DayAhead` hourly + `GbHalfHour_DayAhead` half-hourly), landed as two `market` rows for `bidding_zone=GB`; currency read off the response.
+- [x] Free API only serves ~2 months of history — `401` for older dates, source-side rolling window, not a parsing bug (see Known gaps).
 - [x] DST reviewed statically (no local-time day-boundary reconstruction). Live verification deferred to **2026-10-24–2026-12-24**, once the fall-back day is inside the rolling window, or sooner with v2 access.
 - [ ] Currency handling — `day_ahead.py` still hardcodes `CURRENCY = "EUR"` instead of reading it off the response (harmless, every zone it covers settles EUR). `day_ahead_gb.py` already reads it correctly since GB settles GBP.
-- [ ] Migrate to Nord Pool's gated v2 data portal — **higher priority since 2026-07-15**: free API only serves ~2 months of history (`401` for older dates). Blocked on v2 access.
+- [ ] Migrate to Nord Pool's gated v2 data portal — free API only serves ~2 months of history (`401` for older dates). Blocked on v2 access.
 
 **EPEX**
-- [x] client + day-ahead endpoint — `clients/epex/`, live to `prod.prices`; `ZONE_FILE_CONFIG` covers 19 zones (18 SDAC zones + CH) fetched by `run()`, plus GB (`market="Hourly"`/`"HalfHourly"`, not `"N2EX"` — a prior version of this doc had that wrong) fetched separately by `run_gb()`.
-- [x] Smoke-tested 2025-11-15: 1824 rows across 20 zones/markets (pre-split figure, included GB). EPEX vs ENTSO-E DE spot-check: identical to the cent.
-- [x] DST verified live: AT 2026-03-29 (92 rows) and 2025-10-26 (100 rows), gap/duplicate-free.
-- [x] `run_gb()` — added 2026-07-16 as a second `@flow` in `day_ahead.py`, so GB (own N2EX-timed schedule, see Scheduling) doesn't ride along on `run()`'s SDAC-anchored schedule or vice versa. Calls the same `fetch_and_parse()`/`dump()` as `run()` with `bidding_zones=["GB"]` — no duplicated fetch/parse logic. Re-verified live 2026-07-16 post-split: 96 rows.
+- [x] client + day-ahead endpoint — `clients/epex/`, live to `prod.prices`; `ZONE_FILE_CONFIG` covers 19 zones (18 SDAC zones + CH) fetched by `run()`, plus GB (`market="Hourly"`/`"HalfHourly"`) fetched separately by `run_gb()`.
+- [x] DST transition handling verified (see Nordpool + EPEX + ENTSO-E cross-check below).
+- [x] `run_gb()` — second `@flow` in `day_ahead.py`, so GB (own N2EX-timed schedule, see Scheduling) doesn't ride along on `run()`'s SDAC-anchored schedule or vice versa. Calls the same `fetch_and_parse()`/`dump()` as `run()` with `bidding_zones=["GB"]` — no duplicated fetch/parse logic.
 
 **ENTSO-E**
 - [x] client + day-ahead endpoint — `clients/entsoe/`, live to `prod.prices`; `BIDDING_ZONE_TO_ENTSOE_AREA` mapping covers 33 of 35 zones (all except GB and IT — IT excluded by ENTSO-E's ~7-way sub-zone split). `run()` fetches 32 of those (excludes IE); IE fetched separately by `run_ie()`.
-- [x] Smoke-tested 2025-11-15: 3024 rows across 33 zones (pre-split figure, included IE).
-- [x] DST verified live: DE 2026-03-29 (92 rows) and 2025-10-26 (100 rows), gap/duplicate-free.
-- [x] `run_ie()` — added 2026-07-16 as a second `@flow` in `day_ahead.py`, so IE (own SEM-DA-timed schedule, see Scheduling) doesn't ride along on `run()`'s SDAC-anchored schedule or vice versa. Calls the same `fetch_and_parse()`/`dump()` as `run()` with `bidding_zones=["IE"]` — no duplicated fetch/parse logic. Still hardcodes `MARKET = "SDAC"` for IE, same as `clients/semo/endpoints/day_ahead.py` does — technically wrong (I-SEM's SEM-DA), flagged but left as-is since both live sources already agree on that label and relabeling is a separate decision (see Known gaps). Verified live 2026-07-16: 48 rows.
+- [x] DST transition handling verified (see cross-check below).
+- [x] `run_ie()` — second `@flow` in `day_ahead.py`, so IE (own SEM-DA-timed schedule, see Scheduling) doesn't ride along on `run()`'s SDAC-anchored schedule or vice versa. Calls the same `fetch_and_parse()`/`dump()` as `run()` with `bidding_zones=["IE"]` — no duplicated fetch/parse logic. Still hardcodes `MARKET = "SDAC"` for IE, same as `clients/semo/endpoints/day_ahead.py` does — technically wrong (I-SEM's SEM-DA), flagged but left as-is since both live sources already agree on that label and relabeling is a separate decision (see Known gaps).
 
 **Nordpool + EPEX + ENTSO-E cross-check**
 - [x] `@flow` decorator on all three endpoints' `run()`.
-- [x] ≥2 sources per zone — **verified 2026-07-15 for all 24 zones** (GB was the last gap, closed by the Nordpool GB endpoint + EPEX's GB zone).
-- [x] DST transition handling — **closed 2026-07-15**:
+- [x] ≥2 sources per zone confirmed for all 24 zones (GB was the last gap, closed by the Nordpool GB endpoint + EPEX's GB zone).
+- [x] DST transition handling:
   - **ENTSO-E**: correct by construction — `_day_bounds_utc()` uses `pytz.localize()`, `num_positions` derived from the actual UTC span, not an assumed 24h.
   - **EPEX**: static `Hour 3A`/`Hour 3B` columns disambiguate fall-back via `ambiguous=True/False`; spring-forward hours are null and filtered out before conversion. Known non-issue: plain `Hour N` columns use `ambiguous="raise"` with no `nonexistent=` handling, uncaught by `fetch_and_parse` — harmless since EPEX always pre-splits ambiguous hours.
   - **Nordpool**: reviewed statically only (see above).
 - [ ] Historical backfill for these 24 zones — deferred on purpose, pending review of current progress, so nothing gets backfilled twice.
 
 **OTE (Czech Republic)**
-- [x] client + day-ahead endpoint — `clients/ote/`, live to `prod.prices`. SOAP via `zeep` (`PublicDataService` WSDL, `GetDamPricePeriodE`), single zone (CZ). Verified 2026-07-15: CZ/2025-11-15, 96 rows, matched ENTSO-E's CZ feed to the cent (confirms EUR — endpoint has no currency field). DST-verified 2026-03-29 (92 rows)/2025-10-26 (100 rows), gap-free. Data only available from **2025-10-01** (CZ 15-min go-live) — Production's `ote_api.py` has a stale comment claiming 2025-06-12, confirmed wrong live. Legacy hourly endpoint (`GetDamPriceE`) not wired up, needs CZK/EUR + hourly handling of its own, deferred with backfill.
+- [x] client + day-ahead endpoint — `clients/ote/`, live to `prod.prices`. SOAP via `zeep` (`PublicDataService` WSDL, `GetDamPricePeriodE`), single zone (CZ). Matches ENTSO-E's CZ feed to the cent (confirms EUR — endpoint has no currency field). Data only available from **2025-10-01** (CZ 15-min go-live) — note Production's `ote_api.py` has a stale comment claiming 2025-06-12, confirmed wrong. Legacy hourly endpoint (`GetDamPriceE`) not wired up, needs CZK/EUR + hourly handling of its own, deferred with backfill.
 
 **SEMO (Ireland)**
-- [x] client + day-ahead endpoint — `clients/semo/`, live to `prod.prices`. Lists/downloads SEMOpx static-reports (`DPuG_ID=EA-001`), filtered to `MarketResult_SEM-DA_*`. Single zone (IE) — only `ROI-DA` parsed (`NI-DA` is byte-identical but out of scope). Verified 2026-07-16: IE/2026-07-15, 48 rows; averages to ENTSO-E's hourly IE prices, confirming parsing + EUR assumption. DST-verified 2026-03-29 (46 rows)/2025-10-26 (50 rows) — no special handling needed, SEMO timestamps already carry explicit UTC `Z`. SEM-DA is a **D+1 auction** with delivery day on CET/CEST boundaries, not Irish time — `fetch_day_ahead_documents()` queries one day earlier to account for this. Listing only retains ~12 months of documents (confirmed back to 2020) — same rolling-window limit as Nordpool.
-- [x] Catalog-lag discovery 2026-07-16 (running all sources live): `run()` correctly returned 0 rows for delivery 2026-07-16 — not a bug. SEMO's static-reports catalog indexes `SEM-DA`/`IDA1` documents ~2 calendar days after their `DateRetention` date (confirmed via each document's `PublishTime` metadata across 2026-07-10–07-15), unlike `IDA2`/`IDA3` which publish next-day. Today's SEM-DA (auction 2026-07-15, delivering today) won't be cataloged until ~2026-07-17 00:00. Invalidates the Scheduling section's "results shortly after gate closure" assumption for `semo`/`entsoe.run_ie` — see Scheduling.
+- [x] client + day-ahead endpoint — `clients/semo/`, live to `prod.prices`. Lists/downloads SEMOpx static-reports (`DPuG_ID=EA-001`), filtered to `MarketResult_SEM-DA_*`. Single zone (IE) — only `ROI-DA` parsed (`NI-DA` is byte-identical but out of scope). Averages to ENTSO-E's hourly IE prices, confirming parsing + EUR assumption. Timestamps already carry explicit UTC `Z`, so no DST handling needed. SEM-DA is a **D+1 auction** with delivery day on CET/CEST boundaries, not Irish time — `fetch_day_ahead_documents()` queries one day earlier to account for this. Listing only retains ~12 months of documents — same rolling-window limit as Nordpool.
+- [x] SEMO's static-reports catalog indexes `SEM-DA`/`IDA1` documents ~2 calendar days after their `DateRetention` date, unlike `IDA2`/`IDA3` which publish next-day — `run()` legitimately returns 0 rows for very recent delivery days, not a bug. Invalidates the Scheduling section's "results shortly after gate closure" assumption for `semo`/`entsoe.run_ie` — see Scheduling.
 
 **OPCOM (Romania)**
-- [x] client + day-ahead endpoint — `clients/opcom/`, live to `prod.prices`. XML export from opcom.ro's report page, no auth wall beyond a User-Agent check (WAF blocked default `python-requests` UA — fixed with a static `Mozilla/5.0` header). Single zone (RO), no per-row timestamp — `valuetime` derived from 1-based `Pos` vs. the true UTC day span (same approach as ENTSO-E/OTE/OMIE). Dates with no report return HTTP 200 with an empty `<resultset/>`. History goes back to at least 2015-01-01 (not fully bisected). Delivery-day boundary confirmed CET/CEST, not RO's own EET/EEST — cross-checked against ENTSO-E. Currency hardcoded EUR (no field to read). DST-verified 2026-03-29 (92 rows)/2025-10-26 (100 rows). Dump test passed 2026-07-16: 96 rows for 2026-07-16.
+- [x] client + day-ahead endpoint — `clients/opcom/`, live to `prod.prices`. XML export from opcom.ro's report page, no auth wall beyond a User-Agent check (WAF blocked default `python-requests` UA — fixed with a static `Mozilla/5.0` header). Single zone (RO), no per-row timestamp — `valuetime` derived from 1-based `Pos` vs. the true UTC day span (same approach as ENTSO-E/OTE/OMIE). Dates with no report return HTTP 200 with an empty `<resultset/>`. History goes back to at least 2015-01-01 (not fully bisected). Delivery-day boundary confirmed CET/CEST, not RO's own EET/EEST — cross-checked against ENTSO-E. Currency hardcoded EUR (no field to read).
 
 **OMIE (Spain / Portugal)**
-- [x] client + day-ahead endpoint — `clients/omie/`, live to `prod.prices`. No API — daily flat files on a Drupal file-browser, one file covers both ES and PT (joint MIBEL auction). `list_files()` scrapes the listing to resolve the current-version filename per date (corrected files get incremented suffixes). Forecasttime from file mtime. Resolution derived per-file; verified across the hourly era, the 15-min go-live, and both DST transitions (100/92 rows). ES and PT price columns aren't always identical — diverge during interconnector congestion, so both are parsed as distinct rows. Delivery-day boundary uses `Europe/Madrid` for both zones — cross-checked 2026-07-16 against ENTSO-E, 96/96 match. Pre-2023 history exists as yearly zip archives, not wired up. Dump test passed 2026-07-16: 192 rows (96 ES + 96 PT) for 2026-07-16.
+- [x] client + day-ahead endpoint — `clients/omie/`, live to `prod.prices`. No API — daily flat files on a Drupal file-browser, one file covers both ES and PT (joint MIBEL auction). `list_files()` scrapes the listing to resolve the current-version filename per date (corrected files get incremented suffixes). Forecasttime from file mtime. Resolution derived per-file. ES and PT price columns aren't always identical — diverge during interconnector congestion, so both are parsed as distinct rows. Delivery-day boundary uses `Europe/Madrid` for both zones — cross-checked against ENTSO-E. Pre-2023 history exists as yearly zip archives, not wired up.
 
 **CROPEX (Croatia)**
 - [ ] Client not started — likely paid API access, unconfirmed (see Known gaps); blocked.
@@ -156,16 +163,15 @@ One entry per source, checked off once it's actually landing rows live (not just
 - [ ] Client not started — paid "HUPX Labs" API, unconfirmed access (see Known gaps); blocked. HUPX Labs also bundles BSP Southpool (SI) and SEEPEX (RS) data — could unlock a second SI source too.
 
 **OKTE (Slovakia)**
-- [x] client + day-ahead endpoint — `clients/okte/`, live to `prod.prices`. Public unauthenticated REST API (`isot.okte.sk/api/v1/dam/results`), no WAF issue. Single zone (SK). Response timestamps are already full UTC ISO-8601, so no local-time boundary math is needed. Verified across the 15-min era, hourly era (back to 2010), and both DST transitions (92/100 rows). One request accepts a full date range, so `fetch_day_ahead_prices()` does a single bulk call per run, unlike OPCOM/OMIE's per-day loop. Currency hardcoded EUR (no field). Cross-checked 2026-07-16 against ENTSO-E's SK feed: 96/96 match; also confirmed SK/CZ/HU/RO clear on the same 4M Market Coupling price. Dump test passed 2026-07-16: 96 rows for 2026-07-16.
+- [x] client + day-ahead endpoint — `clients/okte/`, live to `prod.prices`. Public unauthenticated REST API (`isot.okte.sk/api/v1/dam/results`), no WAF issue. Single zone (SK). Response timestamps are already full UTC ISO-8601, so no local-time boundary math is needed. Data available back to 2010. One request accepts a full date range, so `fetch_day_ahead_prices()` does a single bulk call per run, unlike OPCOM/OMIE's per-day loop. Currency hardcoded EUR (no field). Cross-checked against ENTSO-E's SK feed; also confirmed SK/CZ/HU/RO clear on the same 4M Market Coupling price.
 
 **ENEX (Greece)**
 - [x] client + day-ahead endpoint — `clients/enex/`, live to `prod.prices`. HEnEx's EL-DAM results xlsx on a Liferay page, no auth wall. Single zone (GR); targets the "Results" portlet specifically (instance `6eBaUXF5VIb7`). Listing ignores `_delta=`, so `list_files()` paginates via `_cur=1,2,3,...`.
 - [x] Results sheet repeats each period's MCP once per breakdown row (exports, load, generation mix, ...) — `parse_response` dedupes to one row per `SORT` position. `DELIVERY_DURATION` read per row, not hardcoded.
-- [x] Delivery-day boundary confirmed CET/CEST, not Greece's own EET/EEST — cross-checked all 96 quarter-hours of 2026-07-16 against ENTSO-E's GR feed, exact match. `valuetime` reconstructed from the 1-based `SORT` position rather than parsing the ambiguous wall-clock column directly.
+- [x] Delivery-day boundary confirmed CET/CEST, not Greece's own EET/EEST — cross-checked against ENTSO-E's GR feed. `valuetime` reconstructed from the 1-based `SORT` position rather than parsing the ambiguous wall-clock column directly.
 - [x] Currency hardcoded EUR (no field; confirmed via the ENTSO-E cross-check).
 - [x] `forecasttime` uses `utcnow()` fallback — no reliably-timezoned native publish timestamp.
-- [x] DST spring-forward verified 2026-07-16 against 2026-03-29 (92 rows). Fall-back not verifiable yet — listing only retains documents back to **2026-01-01**, so 2025-10-26 is out of range; revisit after 2026-10-25.
-- [x] Dump test passed 2026-07-16: 96 rows for 2026-07-16.
+- [x] Listing only retains documents back to **2026-01-01** — fall-back DST transition not verifiable until 2025-10-26 ages back into range; revisit after 2026-10-25.
 
 **GME (Italy)**
 - [ ] Not started. API looks pricey and needs paperwork/registration.
@@ -176,7 +182,7 @@ One entry per source, checked off once it's actually landing rows live (not just
 **Cross-cutting / not scoped to one source**
 - [ ] Deactivate the per-zone CSV dump in every endpoint's `dump()` before going live — each still writes `output/<source>/<endpoint>/<zone>.csv` alongside the `prod.prices` write. Not documented as functionality anywhere (docstrings/README/CLAUDE.md deliberately say nothing about it); kept only as a debug line for manual cross-checking, not something to rely on.
 - [ ] Intraday scrapers (IDA1-3 auctions, ID1/ID3/FULL VWAPs) — schema already supports this via `market`.
-- [ ] NATS publish alongside DB write.
+- [x] NATS publish alongside DB write — every `clients/*/endpoints/day_ahead*.py` file publishes automatically via `PriceStore.dump()` (see Streaming section above). Verified across single-source and multi-source batch runs with no `msg_id` collisions, including rows across different zones/sources sharing a subject and `valuetime`.
 - [ ] Market code reference/lookup table — only if free-text `market` values start causing problems; `id-tables-design.drawio` sketches an FK-based alternative.
 - [ ] Fuller normalized table design (`id-tables-design.drawio`) — standing idea for a `dim_bidding_zone`/`dim_product`/`dim_market`/`dim_source` model with FKs into `prod.prices`, independent of the typo problem. No plan yet.
 - [ ] Day-ahead volumes alongside prices — needs a schema decision (extend `prod.prices` vs. separate table); currently out of scope.
@@ -186,48 +192,40 @@ One entry per source, checked off once it's actually landing rows live (not just
 
 ## Scheduling
 
-Design only as of 2026-07-16 — nothing deployed yet (see Known gaps). Captured here because the grouping/catch-up/redundancy decisions are non-obvious and worth settling before wiring up Prefect deployments.
+Design only — nothing deployed yet (see Known gaps). Captured here because the grouping/catch-up/redundancy decisions are non-obvious and worth settling before wiring up Prefect deployments.
 
-**Granularity**: one Prefect deployment per `@flow`-decorated function. Each flow processes only the zones/markets passed to `fetch_and_parse()` — as of 2026-07-16, EPEX and ENTSO-E each expose two flows in the same file (`run()` for SDAC zones, `run_gb()`/`run_ie()` for the one non-SDAC zone), so a schedule can target either without wasting a call on the other's not-yet-published zone. That's 12 flows total for day-ahead: `nordpool`, `nordpool_gb`, `epex.run`, `epex.run_gb`, `entsoe.run`, `entsoe.run_ie`, `ote`, `semo`, `opcom`, `omie`, `okte`, `enex`.
+**Granularity**: one Prefect deployment per `@flow`-decorated function. Each flow processes only the zones/markets passed to `fetch_and_parse()` — EPEX and ENTSO-E each expose two flows in the same file (`run()` for SDAC zones, `run_gb()`/`run_ie()` for the one non-SDAC zone), so a schedule can target either without wasting a call on the other's not-yet-published zone. That's 12 flows total for day-ahead: `nordpool`, `nordpool_gb`, `epex.run`, `epex.run_gb`, `entsoe.run`, `entsoe.run_ie`, `ote`, `semo`, `opcom`, `omie`, `okte`, `enex`.
 
-GB and IE used to be bundled into `epex`'s and `entsoe`'s single SDAC flow — split out 2026-07-16 into a second `@flow` function in the *same file* (`run_gb()` in `clients/epex/endpoints/day_ahead.py`, `run_ie()` in `clients/entsoe/endpoints/day_ahead.py`), not a separate endpoint file: both call the same `fetch_and_parse()`/`dump()`/`parse_csv()` already in that file with a different zone list, so there's no duplicated fetch/parse logic to keep in sync. `nordpool` predates this and was already fully separate (`day_ahead.py` vs. `day_ahead_gb.py`) since its Nord Pool API call shape genuinely differs for GB — that split was left as-is.
+GB and IE used to be bundled into `epex`'s and `entsoe`'s single SDAC flow — split into a second `@flow` function in the *same file* (`run_gb()` in `clients/epex/endpoints/day_ahead.py`, `run_ie()` in `clients/entsoe/endpoints/day_ahead.py`), not a separate endpoint file: both call the same `fetch_and_parse()`/`dump()`/`parse_csv()` already in that file with a different zone list, so there's no duplicated fetch/parse logic to keep in sync. `nordpool` predates this and was already fully separate (`day_ahead.py` vs. `day_ahead_gb.py`) since its Nord Pool API call shape genuinely differs for GB — that split was left as-is.
 
-**Timing groups** (anchor = the auction/coupling result the schedule is built around). Exact `cron` expressions now live as comments directly above each `@flow` decorator (added 2026-07-16, prep for actual deployment) — this section stays the narrative summary. Prefect itself runs in CET/CEST, so every cron is written in that single wall-clock timezone rather than per-source local time, converting UK/Irish local auction times to CET/CEST (currently a flat +1h, since the UK/Ireland and EU both change clocks on the same date — noted per-flow as a DST assumption to revisit if that ever stops holding):
+**Timing groups** (anchor = the auction/coupling result the schedule is built around). Exact `cron` expressions live as comments directly above each `@flow` decorator — this section stays the narrative summary. Prefect itself runs in CET/CEST, so every cron is written in that single wall-clock timezone rather than per-source local time, converting UK/Irish local auction times to CET/CEST (currently a flat +1h, since the UK/Ireland and EU both change clocks on the same date — noted per-flow as a DST assumption to revisit if that ever stops holding):
 - **SDAC** (~12:55 CET/CEST clearing) — `nordpool`, `epex.run`, `entsoe.run`, `ote`, `opcom`, `okte`, `enex`, `omie`. OTE/OPCOM/OKTE/ENEX/OMIE are assumed to publish on their own portals close to the same SDAC/4M MC clearing time; this isn't independently confirmed per operator, and the catch-up window below is partly there to absorb that uncertainty as well as genuine exchange-side delays.
-- **N2EX + GB HalfHourly** (GB, two separate auctions, both earlier than SDAC) — `nordpool_gb`, `epex.run_gb`. Confirmed 2026-07-16: N2EX gate closure 09:50 UK = 10:50 CET, results by 10:00 UK = 11:00 CET; HalfHourly gate closure 14:30 UK = 15:30 CET, results shortly after. Both flows fetch *both* GB markets in one call (`nordpool_gb`'s `MARKETS = ["N2EX_DayAhead", "GbHalfHour_DayAhead"]`, EPEX's `ZONE_FILE_CONFIG["GB"]` hourly + half-hourly `ZoneFile` entries) — a single ~2h catch-up window can't cover both clearings 4.5h apart, so each of these two flows needs **two** schedules, not one.
-- **SEM-DA** (Ireland, separate auction, earlier than SDAC) — `semo`, `entsoe.run_ie`. Confirmed 2026-07-16: gate closure firm at 11:00 Irish time = 12:00 CET. **The "results shortly after gate closure" publish-time assumption is wrong** — discovered 2026-07-16 running all sources live: SEMO's static-reports catalog indexes `SEM-DA` (and `IDA1`) documents roughly **2 calendar days** after their auction/`DateRetention` date, not same-day. Confirmed by comparing each document's `PublishTime` metadata against its `DateRetention` across 2026-07-10–07-15 — the lag was a consistent 2 days for every `SEM-DA`/`IDA1` entry, while `IDA2`/`IDA3` publish next-day. Today's `semo.run()`/`entsoe.run_ie()` correctly found nothing for delivery 2026-07-16 (auction 2026-07-15) because that document won't appear in the catalog until ~2026-07-17 00:00. The `*/15 12-13 CET` cron for both flows is built on the wrong assumption and needs redesigning around this ~2-day catalog lag, not gate-closure time — not fixed here, flagging as a scheduling decision to make.
+- **N2EX + GB HalfHourly** (GB, two separate auctions, both earlier than SDAC) — `nordpool_gb`, `epex.run_gb`. N2EX gate closure 09:50 UK = 10:50 CET, results by 10:00 UK = 11:00 CET; HalfHourly gate closure 14:30 UK = 15:30 CET, results shortly after. Both flows fetch *both* GB markets in one call (`nordpool_gb`'s `MARKETS = ["N2EX_DayAhead", "GbHalfHour_DayAhead"]`, EPEX's `ZONE_FILE_CONFIG["GB"]` hourly + half-hourly `ZoneFile` entries) — a single ~2h catch-up window can't cover both clearings 4.5h apart, so each of these two flows needs **two** schedules, not one.
+- **SEM-DA** (Ireland, separate auction, earlier than SDAC) — `semo`, `entsoe.run_ie`. Gate closure firm at 11:00 Irish time = 12:00 CET. **The "results shortly after gate closure" publish-time assumption is wrong**: SEMO's static-reports catalog indexes `SEM-DA` (and `IDA1`) documents roughly **2 calendar days** after their auction/`DateRetention` date, not same-day, while `IDA2`/`IDA3` publish next-day. The `*/15 12-13 CET` cron for both flows is built on the wrong assumption and needs redesigning around this ~2-day catalog lag, not gate-closure time — not fixed here, flagging as a scheduling decision to make.
 
 **Catch-up pattern**: start ~5 min after the expected publish time, poll every 15 minutes for up to 2 hours, to absorb minor exchange-side delays without per-operator retry tuning.
 
 **Redundancy vs. cadence**: the ≥2-sources-per-zone requirement (see Goal) is outage insurance, not simultaneous real-time redundancy — it doesn't require every source per zone to run the same aggressive catch-up cadence. Per-zone primary/backup assignment not yet decided.
 
-## Known gaps / architecture review (2026-07-15)
+## Known gaps
 
-Findings from a full pass over the current code and docs. Flagged rather than silently fixed, since several involve a decision the team should make.
+Findings from a full pass over the current code and docs. Flagged rather than silently fixed, since several involve a decision to make.
 
 **Nordpool's free API only serves a rolling ~2-month window, not full history.** `DayAheadPrices` returns `200` for recent dates and `401` for anything older (confirmed via direct `curl`, independent of this repo's code). Affects both `day_ahead.py` and `day_ahead_gb.py`; EPEX and ENTSO-E are unaffected. Raises priority of the v2-portal migration to-do; historical backfill will land with only 2 of 3 sources for older dates unless v2 access is obtained first.
 
-**~~Nordpool zone config scoped to one zone.~~ Resolved** — full 22-zone `BIDDING_ZONE_TO_NORDPOOL_AREA` mapping active, unblocking 2-source coverage for BG, DK2, EE, LT, LV. GB isn't in this mapping and never will be — see the GB entry above instead.
-
-**~~EPEX zone coverage partial.~~ Resolved** — `ZONE_FILE_CONFIG` now covers 20 zones, including GB and DK2.
-
-**~~Real 2-source coverage lower than the checklist implied.~~ Resolved 2026-07-15** — re-verified from each client's zone config directly: all 24 iteration-1 zones now have ≥2 live sources. Only IT (0 sources, iteration 3) remains below target project-wide.
-
 **Flow logs aren't wired into Prefect.** All three endpoints still use `logging.getLogger(__name__)`/`setup_logging()` instead of `prefect.logging.get_run_logger()` — `@flow` is on `run()`, but log lines won't show as flow-run logs in the Prefect UI. Needs a decision: switch to `get_run_logger()`, add a stdout-forwarding handler, or accept incomplete UI logs.
 
-**No deployment/schedule exists yet.** `@flow` alone doesn't run anything on a cadence; no `prefect.yaml`, `flow.serve()`, `flow.deploy()`, or work pool. Superseded 2026-07-16: the 2026-07-15 "deferred to production infra" call is replaced by the design in **Scheduling** above (grouping, catch-up window, redundancy cadence); actual deployment/schedule creation is still pending.
+**No deployment/schedule exists yet.** `@flow` alone doesn't run anything on a cadence; no `prefect.yaml`, `flow.serve()`, `flow.deploy()`, or work pool. Design exists (see **Scheduling** above — grouping, catch-up window, redundancy cadence); actual deployment/schedule creation is still pending.
 
-**~~No DDL checked into the repo.~~ Resolved 2026-07-15** — `db/migrations/0001_create_prices.sql` matches the live `prod.prices` schema.
-
-**`id-tables-design.drawio` is archived, not a pending plan.** Sketches `dim_bidding_zone`/`dim_product`/`dim_market`/`dim_source` tables with FKs, to stop typos like `"day ahead"` vs `"DAY_AHEAD"` landing silently. Decided 2026-07-15: keep free text (see Resolved Decisions); diagram kept only as a future idea if bad `market` values become a real problem.
+**`id-tables-design.drawio` is archived, not a pending plan.** Sketches `dim_bidding_zone`/`dim_product`/`dim_market`/`dim_source` tables with FKs, to stop typos like `"day ahead"` vs `"DAY_AHEAD"` landing silently. Decision: keep free text (see Resolved Decisions); diagram kept only as a future idea if bad `market` values become a real problem.
 
 **Inconsistent retry behavior across clients.** EPEX retries once on a dropped SFTP connection; Nordpool and ENTSO-E fail immediately on any request exception. Tolerable today since `dump()`'s change-detection makes rescrapes cheap, but worth a deliberate policy once these run unattended.
 
 **No dependency manifest.** No `requirements.txt`/`pyproject.toml` — `prefect`, `pandas`, `sqlalchemy`, `paramiko`, `xmltodict`, `pytz`, `requests`, `zeep`, and `quent_core` are all unpinned. Not urgent solo, but will matter once deployed to a different machine.
 
-**IE rows are labeled `market="SDAC"` on both live sources, but IE isn't SDAC.** `clients/entsoe/endpoints/day_ahead.py`'s `run_ie()` and `clients/semo/endpoints/day_ahead.py` both hardcode `MARKET = "SDAC"` for Ireland's I-SEM `SEM-DA` auction. Noticed 2026-07-16 while splitting IE onto its own flow. Left as-is — both sources already agree on the label, so it isn't currently causing a cross-source mismatch, and relabeling touches already-written rows. Flagging as a decision to make, not fixing silently.
+**IE rows are labeled `market="SDAC"` on both live sources, but IE isn't SDAC.** `clients/entsoe/endpoints/day_ahead.py`'s `run_ie()` and `clients/semo/endpoints/day_ahead.py` both hardcode `MARKET = "SDAC"` for Ireland's I-SEM `SEM-DA` auction. Left as-is — both sources already agree on the label, so it isn't currently causing a cross-source mismatch, and relabeling touches already-written rows. Flagging as a decision to make, not fixing silently.
 
-**Several remaining local providers are gated behind paid or paperwork-based access — flagged 2026-07-16, unresolved:**
+**Several remaining local providers are gated behind paid or paperwork-based access:**
 - **HUPX (Hungary)** — paid "HUPX Labs" API, access unconfirmed. Also bundles BSP Southpool (SI) and SEEPEX (RS) — could unlock a second SI source too (RS isn't in scope).
 - **CROPEX (Croatia)** — likely paid, same unconfirmed status.
 - **GME (Italy)** — free but needs paperwork/registration. Lower barrier than HUPX/CROPEX.
@@ -251,8 +249,10 @@ Not carried forward as-is into `core.PriceStore` — noting why, so the divergen
 | Schema / table name | `prod.prices` |
 | `product` vs `market` | `product` = coarse bucket (`DAY_AHEAD`/`INTRADAY`); `market` = actual price series, free text, no enum |
 | ENTSO-E gap for GB | Confirmed correct, no action needed |
-| Repo name | Proposed: `day-ahead-prices`, awaiting creation |
+| Repo name | `day-ahead-prices` |
 | Rescrape dedup strategy | Append-only, not upsert: `PriceStore.dump()` looks up the latest known price per key (one query per batch, not per row) and inserts a new row (new `forecasttime`) only when price actually changed; unchanged rescrapes are skipped. `forecasttime` therefore means "when this price last changed", not "when we last checked" — true for both source-native forecasttime (e.g. EPEX file mtime) and `utcnow()` fallback sources alike. `ON CONFLICT DO NOTHING` on the full PK is kept only as a safety net against exact re-inserts (e.g. a retried failed run), not as the change-detection mechanism. Comparison is price-only — resolution/currency changes alone don't trigger a new row. |
 | Column types | `bidding_zone`/`product`/`market`/`source` are `varchar(20)`, `currency` is `varchar(10)` (not open `text`); `resolution` is `smallint` (minutes) rather than an ISO 8601 duration string like `PT60M`. All columns are `NOT NULL`. Verified against the draft DDL for the table. |
-| Dimension tables / FKs (`id-tables-design.drawio`) | Not adopted (2026-07-15). Free-text columns stand per the `product` vs `market` decision above. Diagram kept only as a future idea to revisit if invalid/misspelled `market` values actually cause problems. |
+| Dimension tables / FKs (`id-tables-design.drawio`) | Not adopted. Free-text columns stand per the `product` vs `market` decision above. Diagram kept only as a future idea to revisit if invalid/misspelled `market` values actually cause problems. |
 | GB day-ahead via Nord Pool | Land both `N2EX_DayAhead` (hourly) and `GbHalfHour_DayAhead` (half-hourly) as separate `market` rows for `bidding_zone=GB` — same one-zone-two-markets pattern as AT's `SDAC`/`EXAA_EARLY`, not a choice between them. |
+| NATS subject granularity | One subject per `product` (`prices.<product>.updates`), not per source or per zone — consumers filter by zone/source/market via the event's `data` fields. See Streaming section above. |
+| NATS integration point | Centralized in `PriceStore.dump()`, not duplicated per endpoint (unlike the Empire producer, which publishes inline in each endpoint) — every `clients/*/endpoints/day_ahead*.py` file is untouched. |

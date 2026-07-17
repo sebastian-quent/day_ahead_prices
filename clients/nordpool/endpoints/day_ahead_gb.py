@@ -101,12 +101,12 @@ def dump(df: pd.DataFrame) -> None:
 def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
     """fetch Nord Pool GB day-ahead prices and dump to prod.prices.
 
-    from_date/to_date optional for historical backfill; defaults to today+tomorrow.
+    from_date/to_date optional for historical backfill; defaults to tomorrow only.
     """
     setup_logging()
-    today = dt.date.today()
-    from_date = from_date or today
-    to_date = to_date or today + dt.timedelta(days=1)
+    tomorrow = dt.date.today() + dt.timedelta(days=1)
+    from_date = from_date or tomorrow
+    to_date = to_date or tomorrow
 
     df = fetch_and_parse(from_date=from_date, to_date=to_date)
     if df.empty:
