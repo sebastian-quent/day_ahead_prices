@@ -20,6 +20,16 @@ BIDDING_ZONE_TO_ENTSOE_AREA = {
     "HR": SHORT_NAME_EIC_PAIRS["hr"],
     "HU": SHORT_NAME_EIC_PAIRS["hu"],
     "IE": "10Y1001A1001A59C",
+    # Italy has no single ENTSO-E area - split into 7 sub-zones, EIC codes read
+    # directly off quent_core's table (short names differ from ours: it_nor,
+    # it_c_nor, it_c_sud, it_sud, sici, sd, it_ca).
+    "IT_NORD": SHORT_NAME_EIC_PAIRS["it_nor"],
+    "IT_CNOR": SHORT_NAME_EIC_PAIRS["it_c_nor"],
+    "IT_CSUD": SHORT_NAME_EIC_PAIRS["it_c_sud"],
+    "IT_SUD": SHORT_NAME_EIC_PAIRS["it_sud"],
+    "IT_SICI": SHORT_NAME_EIC_PAIRS["sici"],
+    "IT_SARD": SHORT_NAME_EIC_PAIRS["sd"],
+    "IT_CALA": SHORT_NAME_EIC_PAIRS["it_ca"],
     "LT": SHORT_NAME_EIC_PAIRS["lt"],
     "LV": SHORT_NAME_EIC_PAIRS["lv"],
     "NL": SHORT_NAME_EIC_PAIRS["nl"],

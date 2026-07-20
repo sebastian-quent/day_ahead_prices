@@ -110,8 +110,8 @@ def _convert_hour_to_timestamp(date: pd.Timestamp, slot: str) -> pd.Timestamp:
     return naive.tz_localize(tz="Europe/Copenhagen", ambiguous=ambiguous)
 
 
-def _remote_path(zone: ZoneFile, year: int) -> str:
-    period, filename_prefix, filename_infix = _RESOLUTION_FILE_CONVENTION[zone.resolution_minutes]
+def _remote_path(zone: ZoneFile, year: int, resolution_minutes: int) -> str:
+    period, filename_prefix, filename_infix = _RESOLUTION_FILE_CONVENTION[resolution_minutes]
     freshness = "Current" if year == dt.date.today().year else "Historical"
     return (
         f"/{zone.folder}/Day-Ahead Auction/{period}/{freshness}/Prices_Volumes/"
@@ -120,14 +120,30 @@ def _remote_path(zone: ZoneFile, year: int) -> str:
 
 
 def fetch_day_ahead_file(zone: ZoneFile, year: int) -> tuple:
-    """fetch one zone file's rolling annual day-ahead auction price file."""
-    remote_path = _remote_path(zone, year)
-    logger.info("fetching EPEX file %s", remote_path)
-    content = epex_client.fetch_file(remote_path)
-    if content is None:
-        return None, None
-    forecasttime = epex_client.stat_mtime(remote_path)
-    return content, forecasttime
+    """fetch one zone file's rolling annual day-ahead auction price file.
+
+    tries the zone's configured resolution first, falling back to 60-min if that file
+    doesn't exist. Covers zones that moved from hourly to quarter-hourly settlement in
+    October 2025 (see project-overview.md Historical backfill note) - older years are
+    found at their real resolution instead of failing outright. Only ever costs an extra
+    (failed) lookup on historical years for a zone that changed resolution; live daily
+    runs always hit the current year at the configured resolution, so no added cost there.
+    Returns the resolution that actually matched, since that's what the file's columns
+    are shaped for - not necessarily the zone's configured one.
+    """
+    candidates = [zone.resolution_minutes]
+    if zone.resolution_minutes == 15:
+        candidates.append(60)
+
+    for resolution_minutes in candidates:
+        remote_path = _remote_path(zone, year, resolution_minutes)
+        logger.info("fetching EPEX file %s", remote_path)
+        content = epex_client.fetch_file(remote_path)
+        if content is not None:
+            forecasttime = epex_client.stat_mtime(remote_path)
+            return content, forecasttime, resolution_minutes
+
+    return None, None, None
 
 
 def _extract_currency(content: bytes) -> str:
@@ -138,8 +154,13 @@ def _extract_currency(content: bytes) -> str:
     return DEFAULT_CURRENCY
 
 
-def parse_csv(content: bytes, bidding_zone: str, zone: ZoneFile, forecasttime: pd.Timestamp) -> pd.DataFrame:
-    """parse one zone's annual day-ahead auction CSV into prod.prices-shaped rows."""
+def parse_csv(content: bytes, bidding_zone: str, zone: ZoneFile, resolution_minutes: int, forecasttime: pd.Timestamp) -> pd.DataFrame:
+    """parse one zone's annual day-ahead auction CSV into prod.prices-shaped rows.
+
+    resolution_minutes is the resolution the fetched file actually matched (see
+    fetch_day_ahead_file), not necessarily zone.resolution_minutes - a zone's resolution
+    can differ by year around a settlement-period change.
+    """
     currency = _extract_currency(content)
 
     df = pd.read_csv(io.BytesIO(content), skiprows=1)
@@ -149,10 +170,10 @@ def parse_csv(content: bytes, bidding_zone: str, zone: ZoneFile, forecasttime: p
     df = df.unstack().rename("price").reset_index()
     df = df.loc[df["price"].notnull()]
 
-    if zone.resolution_minutes == 60:
+    if resolution_minutes == 60:
         convert = _convert_hour_to_timestamp
     else:
-        convert = partial(_convert_subhour_to_timestamp, resolution_minutes=zone.resolution_minutes)
+        convert = partial(_convert_subhour_to_timestamp, resolution_minutes=resolution_minutes)
     valuetime = df.apply(lambda row: convert(row["Date"], row["slot"]), axis=1).dt.tz_convert("UTC")
 
     df = df.assign(
@@ -162,7 +183,7 @@ def parse_csv(content: bytes, bidding_zone: str, zone: ZoneFile, forecasttime: p
         product=PRODUCT,
         market=zone.market,
         source=SOURCE,
-        resolution=zone.resolution_minutes,
+        resolution=resolution_minutes,
         currency=currency,
     )
 
@@ -179,12 +200,12 @@ def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -
     for bidding_zone in bidding_zones:
         for zone in ZONE_FILE_CONFIG[bidding_zone]:
             for year in years:
-                content, forecasttime = fetch_day_ahead_file(zone, year)
+                content, forecasttime, resolution_minutes = fetch_day_ahead_file(zone, year)
                 if content is None:
                     logger.warning("skipping %s %s (%s) %s: EPEX fetch failed", bidding_zone, zone.market, zone.resolution_minutes, year)
                     continue
                 try:
-                    frames.append(parse_csv(content, bidding_zone, zone, forecasttime))
+                    frames.append(parse_csv(content, bidding_zone, zone, resolution_minutes, forecasttime))
                 except (KeyError, ValueError):
                     logger.error(
                         "skipping %s %s (%s) %s: failed to parse EPEX file",

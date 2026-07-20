@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 price_store = PriceStore(engine)
 
-SOURCE = "ENTSO-E"
+SOURCE = "ENTSOE"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
 MARKET_IE = "SEM_DA"  # IE isn't SDAC - I-SEM's own day-ahead auction, see run_ie()

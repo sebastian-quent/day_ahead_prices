@@ -8,7 +8,7 @@ Redundancy requirement: at least **two independent sources per bidding zone**, s
 
 ## Scope
 
-- In scope: day-ahead auction prices (`DAY_AHEAD`), all bidding zones listed below, historical backfill (2026-01-01 onward — this calendar year only, for now), Prefect-scheduled runs with logging.
+- In scope: day-ahead auction prices (`DAY_AHEAD`), all bidding zones listed below, historical backfill (2024-01-01 onward — see To do → Cross-cutting → Historical backfill for per-source readiness), Prefect-scheduled runs with logging.
 - Later, not now: intraday (`INTRADAY`) scrapers. Schema already supports it (see Data model).
 - Out of scope: anything not price-related (volumes, nominations, flows, imbalance prices) — stays in existing scraper setups.
 
@@ -46,7 +46,7 @@ Table: **`prod.prices`**.
 | bidding_zone | `varchar(20)`     |  ✓  |    ✓     | Delivery area (DE, DK1, NO2, GB, ...)                        |
 | product      | `varchar(20)`     |  ✓  |    ✓     | Coarse bucket: `DAY_AHEAD` or `INTRADAY`                     |
 | market       | `varchar(20)`     |  ✓  |    ✓     | The actual price series identity (see below)                |
-| source       | `varchar(20)`     |  ✓  |    ✓     | Data source (`EPEX`, `Nord Pool`, `ENTSO-E`, `EXAA`, ...)    |
+| source       | `varchar(20)`     |  ✓  |    ✓     | Data source (`EPEX`, `Nord Pool`, `ENTSOE`, `EXAA`, ...)     |
 | resolution   | `smallint`        |     |    ✓     | Delivery resolution in minutes (`60`, `30`, `15`)            |
 | currency     | `varchar(10)`     |     |    ✓     | Native currency (`EUR`, `GBP`, `CHF`, `NOK`, ...)            |
 | price        | `numeric(10,2)`   |     |    ✓     | Market clearing price / VWAP                                |
@@ -84,7 +84,7 @@ Legend: **✓** implemented and landing data · **○** source could cover this 
 | GR           | Greece         | –        | –    | ✓       | ✓ ENEX         | 2            |
 | HU           | Hungary        | –        | –    | ✓       | ○ HUPX         | 1            |
 | IE           | Ireland        | –        | –    | ✓       | ✓ SEMO         | 2            |
-| IT           | Italy          | –        | –    | ○*      | ○ GME          | 0            |
+| IT           | Italy          | –        | –    | ✓       | ○ GME          | 1            |
 | LT           | Lithuania      | ✓        | –    | ✓       | –              | 2            |
 | LV           | Latvia         | ✓        | –    | ✓       | –              | 2            |
 | NL           | Netherlands    | ✓        | ✓    | ✓       | –              | 3            |
@@ -105,9 +105,9 @@ Legend: **✓** implemented and landing data · **○** source could cover this 
 | CH           | Switzerland    | –        | ✓    | ✓       | –              | 2            |
 | GB           | Great Britain  | ✓        | ✓    | –       | –              | 2            |
 
-\* IT's ENTSO-E gap is a mapping decision, not missing config — `clients/entsoe/config.py` excludes it because ENTSO-E splits Italy into ~7 price sub-zones with no single EIC matching our one `IT` bidding_zone.
-
 GB has no ENTSO-E source; Nordpool + EPEX give it 2 live sources. GB isn't reachable via Nordpool's normal SDAC batch call — it runs under two separate Nord Pool markets instead, `N2EX_DayAhead` (hourly) and `GbHalfHour_DayAhead` (half-hourly), both on the same free/unauthenticated API host.
+
+IT has no single ENTSO-E area — ENTSO-E splits it into 7 price sub-zones, landed as 7 separate `bidding_zone` rows (`IT_NORD`, `IT_CNOR`, `IT_CSUD`, `IT_SUD`, `IT_SICI`, `IT_SARD`, `IT_CALA`, using ENTSO-E's own area naming) rather than one `IT` row. The `IT` row above rolls all 7 up for the country-level overview.
 
 ## To do
 
@@ -130,9 +130,10 @@ One entry per source, checked off once it's actually landing rows live (not just
 - [x] client + day-ahead endpoint — `clients/epex/`, live to `prod.prices`; `ZONE_FILE_CONFIG` covers 19 zones (18 SDAC zones + CH) fetched by `run()`, plus GB (`market="Hourly"`/`"HalfHourly"`) fetched separately by `run_gb()`.
 - [x] DST transition handling verified (see Nordpool + EPEX + ENTSO-E cross-check below).
 - [x] `run_gb()` — second `@flow` in `day_ahead.py`, so GB (own N2EX-timed schedule, see Scheduling) doesn't ride along on `run()`'s SDAC-anchored schedule or vice versa. Calls the same `fetch_and_parse()`/`dump()` as `run()` with `bidding_zones=["GB"]` — no duplicated fetch/parse logic.
+- [x] Historical resolution fallback — `fetch_day_ahead_file()` tries the configured resolution first, falls back to 60 min if that file doesn't exist (needed for pre-Oct-2025 zones now configured at 15 min). Confirmed live for AT/DE 2024-03-15.
 
 **ENTSO-E**
-- [x] client + day-ahead endpoint — `clients/entsoe/`, live to `prod.prices`; `BIDDING_ZONE_TO_ENTSOE_AREA` mapping covers 33 of 35 zones (all except GB and IT — IT excluded by ENTSO-E's ~7-way sub-zone split). `run()` fetches 32 of those (excludes IE); IE fetched separately by `run_ie()`.
+- [x] client + day-ahead endpoint — `clients/entsoe/`, live to `prod.prices`; `BIDDING_ZONE_TO_ENTSOE_AREA` mapping covers 34 of 35 zones (all except GB) — IT is split into its own 7 ENTSO-E sub-zones (`IT_NORD`, `IT_CNOR`, `IT_CSUD`, `IT_SUD`, `IT_SICI`, `IT_SARD`, `IT_CALA`) rather than one `IT` entry, so the mapping has 40 dict entries in total. `run()` fetches 39 of those (excludes IE); IE fetched separately by `run_ie()`.
 - [x] DST transition handling verified (see cross-check below).
 - [x] `run_ie()` — second `@flow` in `day_ahead.py`, so IE (own SEM-DA-timed schedule, see Scheduling) doesn't ride along on `run()`'s SDAC-anchored schedule or vice versa. Calls the same `fetch_and_parse()`/`dump()` as `run()` with `bidding_zones=["IE"]` — no duplicated fetch/parse logic. `market` label resolved 2026-07-20 (see Known gaps): `fetch_and_parse()`/`parse_response()` now take an optional `market` param (default `MARKET`, still `"SDAC"` for `run()`'s real SDAC zones), and `run_ie()` passes the new `MARKET_IE = "SEM_DA"` constant — `clients/semo/endpoints/day_ahead.py` updated to match.
 
@@ -159,12 +160,6 @@ One entry per source, checked off once it's actually landing rows live (not just
 **OMIE (Spain / Portugal)**
 - [x] client + day-ahead endpoint — `clients/omie/`, live to `prod.prices`. No API — daily flat files on a Drupal file-browser, one file covers both ES and PT (joint MIBEL auction). `list_files()` scrapes the listing to resolve the current-version filename per date (corrected files get incremented suffixes). Forecasttime from file mtime. Resolution derived per-file. ES and PT price columns aren't always identical — diverge during interconnector congestion, so both are parsed as distinct rows. Delivery-day boundary uses `Europe/Madrid` for both zones — cross-checked against ENTSO-E. Pre-2023 history exists as yearly zip archives, not wired up.
 
-**CROPEX (Croatia)**
-- [ ] Client not started — blocked on paid/unconfirmed API access, see Known gaps.
-
-**HUPX (Hungary)**
-- [ ] Client not started — blocked on paid "HUPX Labs" API access, see Known gaps.
-
 **OKTE (Slovakia)**
 - [x] client + day-ahead endpoint — `clients/okte/`, live to `prod.prices`. Public unauthenticated REST API (`isot.okte.sk/api/v1/dam/results`), no WAF issue. Single zone (SK). Response timestamps are already full UTC ISO-8601, so no local-time boundary math is needed. Data available back to 2010. One request accepts a full date range, so `fetch_day_ahead_prices()` does a single bulk call per run, unlike OPCOM/OMIE's per-day loop. Currency hardcoded EUR (no field). Cross-checked against ENTSO-E's SK feed; also confirmed SK/CZ/HU/RO clear on the same 4M Market Coupling price.
 
@@ -176,14 +171,22 @@ One entry per source, checked off once it's actually landing rows live (not just
 - [x] `forecasttime` uses `utcnow()` fallback — no reliably-timezoned native publish timestamp.
 - [x] Listing only retains documents back to **2026-01-01** — fall-back DST transition not verifiable until 2025-10-26 ages back into range; revisit after 2026-10-25.
 
+**CROPEX (Croatia)**
+- [ ] Client not started — blocked on paid/unconfirmed API access, see Known gaps.
+
+**HUPX (Hungary)**
+- [ ] Client not started — blocked on paid "HUPX Labs" API access, see Known gaps.
+
 **GME (Italy)**
-- [ ] Not started — open coverage decision (not blocked on access like HR/HU/SI), see Known gaps.
+- [ ] Not started — would be IT's second live source; not blocked on access like HR/HU/SI, see Known gaps.
 
 **BSP Southpool (Slovenia)**
 - [ ] No standalone source — only reachable via the HUPX Labs bundle, see Known gaps.
 
 **Cross-cutting / not scoped to one source**
-- [ ] Historical backfill — scope decided: full calendar year 2026 (2026-01-01 through today), across all bidding zones/sources in the matrix above. Only **one** source per zone/day is required — the ≥2-sources rule is live-operation outage insurance, not a backfill requirement (see Goal). Not started yet. Nordpool's ~2-month rolling window (see Known gaps) means Nordpool won't cover the older part of the range, but that's fine under the one-source rule as long as EPEX/ENTSO-E/local sources land those zone/days.
+- [ ] Historical backfill — start from **2024-01-01** wherever a source can reach that far back; only **one** source per zone/day is required (the ≥2-sources rule is live-operation outage insurance, not a backfill requirement — see Goal). Not started yet.
+  - **Per-source floor** (can't reach 2024-01-01, source-side limit, not a bug): Nord Pool (~2-month rolling window), OTE (floor 2025-10-01, CZ 15-min go-live), SEMO (~12-month retention), ENEX (archive depth stops well before 2024). ENTSO-E, EPEX, OPCOM, OMIE, OKTE all confirmed reaching back to 2024-01-01.
+  - **Resolution change (October 2025)**: many zones moved 60-min → 15-min settlement then, so backfilled 2024 rows must be labeled `resolution=60` for those zones, not the current value. ENTSO-E/OPCOM/OMIE/OKTE derive `resolution` dynamically per response, so this is safe by construction. EPEX's `ZONE_FILE_CONFIG` used to hardcode one static resolution per zone (breaking 2024 fetches for the 17 zones now at 15 min) — fixed: `fetch_day_ahead_file()` falls back to the 60-min file/path when the configured-resolution one doesn't exist.
 - [x] Deactivate the per-zone CSV dump in every endpoint's `dump()` — commented out (not deleted) in all 10 `clients/*/endpoints/day_ahead*.py` files, kept available to uncomment for manual debugging/cross-checking.
 - [ ] Intraday scrapers (IDA1-3 auctions, ID1/ID3/FULL VWAPs) — schema already supports this via `market`.
 - [x] NATS publish alongside DB write — every `clients/*/endpoints/day_ahead*.py` file publishes automatically via `PriceStore.dump()` (see Streaming section above). Verified across single-source and multi-source batch runs with no `msg_id` collisions, including rows across different zones/sources sharing a subject and `valuetime`.
@@ -219,7 +222,7 @@ A Prefect flow only fails on a code exception — correct for genuine errors, bu
 
 - **`monitoring/day_ahead_completeness.py`** — new top-level module (sibling to `clients/` and `core/`, since it's cross-cutting ops tooling, not a scraper endpoint or a shared library). `@flow`-decorated `run(target_date=None)`, defaulting to tomorrow's delivery day.
 - **Check**: every in-scope bidding zone must have **at least one** `prod.prices` row with `product="DAY_AHEAD"` for the target delivery day — any live source counts, consistent with the ≥1-source-per-zone redundancy framing (see Goal); this is a zone-level check, not per-source.
-- **In-scope zones**: a static list of the 34 zones from the matrix above with ≥1 live source (all listed zones except IT, which has 0). Hardcoded directly in the script rather than shared via `core/`, since scrapers may split into their own repos later and a shared constant would complicate that split — revisit as a `core/` constant only if that need actually arises.
+- **In-scope zones**: a static list of every zone from the matrix above with ≥1 live source (35 country-level rows, expanded to 41 `bidding_zone` codes since IT counts as 7 ENTSO-E sub-zones instead of one `IT` code). Hardcoded directly in the script rather than shared via `core/`, since scrapers may split into their own repos later and a shared constant would complicate that split — revisit as a `core/` constant only if that need actually arises.
 - **Delivery-day bounds**: reuses the same `_day_bounds_utc()` pattern (pytz `localize()` + `.astimezone(utc)`) already duplicated across `entsoe`/`opcom`/`enex`, anchored to `Europe/Copenhagen` — the same single CET/CEST anchor every existing scraper uses, including for GB/IE (see the flat +1h DST assumption in Scheduling above).
 - **Timing**: `0 17 * * *` CET/CEST — after every live source's catch-up window for tomorrow's delivery day has closed (GB HalfHourly is the latest, ~15:30 CET).
 - **Never fails the Prefect run** on missing data — a zone with zero rows is logged (and will be alerted, once the channel below is picked), not raised as an exception. Verified live: flow completes in state `Completed()` even when zones are missing.
@@ -232,24 +235,14 @@ Findings from a full pass over the current code and docs. Flagged rather than si
 
 **Nordpool's free API only serves a rolling ~2-month window, not full history.** `DayAheadPrices` returns `200` for recent dates and `401` for anything older (confirmed via direct `curl`, independent of this repo's code). Affects both `day_ahead.py` and `day_ahead_gb.py`; EPEX and ENTSO-E are unaffected. Raises priority of the v2-portal migration to-do; historical backfill will land with only 2 of 3 sources for older dates unless v2 access is obtained first.
 
-**Flow logs now reach both the terminal and the Prefect UI, resolved without touching any endpoint code, verified with a real local flow run 2026-07-20.** Every module still logs via plain `logging.getLogger(__name__)` under the `clients.*`/`core.*`/`monitoring.*` hierarchy, as before. The fix was a single Prefect setting, not a code change: `PREFECT_LOGGING_EXTRA_LOGGERS=clients,core,monitoring`, set via `prefect.settings.update_current_profile()` into the active local profile (profile `ephemeral`, see below for why raw `prefect config set` couldn't be used initially). Prefect attaches its API-shipping handler directly to those three logger names; since child loggers propagate up by default, every `clients.<source>.*`/`core.*`/`monitoring.*` logger is covered without listing each module individually. The record then keeps propagating to the root logger, where `core/logging.py`'s stdout handler still fires — so terminal output is unchanged and unduplicated. Confirmed end-to-end: a throwaway `@flow` logging through a plain module logger showed up both in the terminal and via `POST /api/logs/` against the local server.
-
 **Not to forget later:** the `PREFECT_LOGGING_EXTRA_LOGGERS` setting (and the `PREFECT_HOME` override below) live on the local dev machine's Prefect profile only. Once a work pool/deployment actually gets created (still not wired up, see below), the same env vars need to be set wherever that worker runs (work pool job template or `prefect.yaml`'s `env:` block) — otherwise the worker process won't have them and UI logs will silently go back to being incomplete.
-
-**Three pre-existing local-environment bugs surfaced and were fixed while verifying the above, so flows can actually run locally, not just have the setting verified in isolation:**
-- **`importlib-metadata` missing.** `prefect==3.4.14`'s own `Requires-Dist` only declares `importlib-metadata` for `python_version < '3.10'`, but `prefect/workers/base.py` (pulled in by `prefect.cli.__init__`, so any `prefect` CLI invocation, e.g. `prefect config set`, hit this) imports it unconditionally regardless of Python version — an upstream oversight in that release. Fixed by adding `importlib-metadata = ">=4.4"` as an explicit direct dependency in `pyproject.toml` (locked to `9.0.0`).
-- **`fastapi` too new for `prefect==3.4.14`.** The previously-installed `fastapi==0.139.2` (satisfies prefect's loose `<1.0.0,>=0.111.0` constraint, but broke anyway) crashed the local ephemeral API server on every request (`AttributeError: 'PrefectRouter' object has no attribute 'routes'`) — `prefect`'s custom router subclass doesn't implement a FastAPI-internals method added in a later `fastapi` minor release. Fixed by pinning `fastapi = "~=0.115.6"` explicitly in `pyproject.toml` (a version contemporaneous with this prefect release; locked to `0.115.14`) rather than leaving it floating as an unpinned transitive dependency.
-- **Shared `~/.prefect` SQLite DB stamped by an incompatible (newer) schema.** Running a flow locally failed separately with an Alembic error (`No such revision or branch '79e7a60e43d8'`) — this project's pinned `prefect==3.4.14` couldn't open a DB whose schema was stamped by a newer Prefect version. Root cause: `~/.prefect` is a single global directory shared by every local Prefect process under this Windows user account, and a different, newer Prefect install elsewhere on the machine had already migrated it forward. **Not** Production's real data — Production's actual Prefect server runs on a separate host against Postgres (`Prefect/run_prefect_server.bat` in the `Production` repo, `PREFECT_API_URL=http://127.0.0.1:4200/api` on that host, DB via `quent_core.database.db_connect.get_prefect_db_url()`), so this shared local file was already-broken, low-value ad-hoc test state, not resetting anything Production depends on. Fixed by isolating this project from the shared file rather than resetting it (which would still have affected any other *local* ad-hoc Prefect use on this machine): set `PREFECT_HOME` in the same `ephemeral` profile to `<repo>/.prefect` (gitignored), so this project's local ephemeral server gets its own fresh SQLite DB. The original `~/.prefect` state was left untouched.
 
 **No deployment/schedule exists yet.** `@flow` alone doesn't run anything on a cadence; no `prefect.yaml`, `flow.serve()`, `flow.deploy()`, or work pool. Design exists (see **Scheduling** above — grouping, catch-up window, redundancy cadence); actual deployment/schedule creation is still pending.
 
 **`id-tables-design.drawio` is archived, not a pending plan.** Sketches `dim_bidding_zone`/`dim_product`/`dim_market`/`dim_source` tables with FKs, to stop typos like `"day ahead"` vs `"DAY_AHEAD"` landing silently. Decision: keep free text (see `product` vs `market` in Data model); diagram kept only as a future idea if bad `market` values become a real problem.
 
-**IE market label resolved 2026-07-20: `SEM_DA`, not `SDAC`.** Ireland's day-ahead auction is I-SEM's own `SEM-DA` — coupled *to* SDAC via interconnector allocation, but not itself part of the SDAC multi-region coupling run, so `"SDAC"` (both live sources' prior hardcoded label) was wrong. Both `clients/entsoe/endpoints/day_ahead.py::run_ie()` and `clients/semo/endpoints/day_ahead.py` now emit `market="SEM_DA"` (matches the existing free-text convention — underscore-only, no hyphen, like `EXAA_EARLY`/`IDA1`). All pre-existing `SDAC`-labeled `IE` rows were deleted from `prod.prices` by hand and are being restored under the corrected label, starting from the 2026-07-13 delivery day.
-
 **Several remaining local providers are gated behind paid or paperwork-based access:**
 - **HUPX (Hungary)** — paid "HUPX Labs" API, access unconfirmed. Also bundles BSP Southpool (SI) and SEEPEX (RS) — could unlock a second SI source too (RS isn't in scope). **Blocked for the time being (2026-07-20)** — HU and SI (only reachable via the same HUPX Labs bundle) are both deprioritized, not being actively pursued near-term.
 - **CROPEX (Croatia)** — likely paid, same unconfirmed status. **Blocked for the time being (2026-07-20)**, same reasoning as HU/SI.
-- **GME (Italy)** — free but needs paperwork/registration. Lower barrier than HUPX/CROPEX. Unlike HR/HU/SI, IT is **not** being treated as blocked — it's an open coverage decision still to be made (2026-07-20): pursue GME registration, find an ENTSO-E sub-zone workaround, or accept the 0-source gap for now.
+- **GME (Italy)** — free but needs paperwork/registration. Lower barrier than HUPX/CROPEX. Would give IT a second live source (currently 1, via ENTSO-E) for the ≥2-sources redundancy goal — not pursued yet, not blocked either.
 - **OPCOM (Romania)** — no auth wall found so far, picked up first for that reason. Worth re-confirming once the client is built, in case automated (non-browser) access needs auth.
-

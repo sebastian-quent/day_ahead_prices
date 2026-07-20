@@ -17,13 +17,13 @@ PRODUCT = "DAY_AHEAD"
 
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Copenhagen")
 
-# every bidding_zone from project-overview.md's matrix with >=1 live source today (all listed
-# zones except IT, which currently has 0 - checking it would always false-positive). static
+# every bidding_zone from project-overview.md's matrix with >=1 live source today. static
 # list, not shared via core/, since scrapers may split into their own repos later and a shared
 # constant would complicate that split; revisit as a core/ constant if this needs to be reused.
 IN_SCOPE_ZONES = [
     "AT", "BE", "BG", "CH", "CZ", "DE", "DK1", "DK2", "EE", "ES", "FI", "FR", "GB", "GR",
-    "HR", "HU", "IE", "LT", "LV", "NL", "NO1", "NO2", "NO3", "NO4", "NO5", "PL", "PT", "RO",
+    "HR", "HU", "IE", "IT_NORD", "IT_CNOR", "IT_CSUD", "IT_SUD", "IT_SICI", "IT_SARD",
+    "IT_CALA", "LT", "LV", "NL", "NO1", "NO2", "NO3", "NO4", "NO5", "PL", "PT", "RO",
     "SE1", "SE2", "SE3", "SE4", "SI", "SK",
 ]
 
