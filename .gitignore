@@ -150,6 +150,9 @@ activemq-data/
 # local debug CSV dumps, not carried into production
 output/
 
+# project-local Prefect home (isolated from the shared ~/.prefect, see project-overview.md Known gaps)
+.prefect/
+
 # Environments
 .env
 .envrc

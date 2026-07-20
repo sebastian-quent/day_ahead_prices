@@ -18,7 +18,6 @@ price_store = PriceStore(engine)
 SOURCE = "Nord Pool"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
-CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/nordpool/day_ahead")
 
@@ -38,6 +37,7 @@ def fetch_day_ahead_prices(date: dt.date, delivery_areas: list, currency: str = 
 
 def parse_response(raw: dict, forecasttime: pd.Timestamp) -> pd.DataFrame:
     """parse one day's Nord Pool DayAheadPrices response into prod.prices-shaped rows."""
+    currency = raw.get("currency")
     rows = []
     for entry in raw.get("multiAreaEntries", []):
         delivery_start = pd.Timestamp(entry["deliveryStart"]).tz_convert("UTC")
@@ -57,7 +57,7 @@ def parse_response(raw: dict, forecasttime: pd.Timestamp) -> pd.DataFrame:
                     "market": MARKET,
                     "source": SOURCE,
                     "resolution": resolution_minutes,
-                    "currency": CURRENCY,
+                    "currency": currency,
                     "price": price,
                 }
             )
@@ -86,9 +86,9 @@ def fetch_and_parse(from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
 
 def dump(df: pd.DataFrame) -> None:
     """write day-ahead prices to prod.prices via PriceStore."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for bidding_zone, zone_df in df.groupby("bidding_zone"):
-        zone_df.to_csv(OUTPUT_DIR / f"{bidding_zone}.csv", index=False)
+    # OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # for bidding_zone, zone_df in df.groupby("bidding_zone"):
+    #     zone_df.to_csv(OUTPUT_DIR / f"{bidding_zone}.csv", index=False)
 
     written = price_store.dump(df)
     logger.info("PriceStore.dump: wrote %d row(s) for Nord Pool day-ahead", written)

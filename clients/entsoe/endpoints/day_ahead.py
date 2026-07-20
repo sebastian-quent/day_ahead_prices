@@ -21,6 +21,7 @@ price_store = PriceStore(engine)
 SOURCE = "ENTSO-E"
 PRODUCT = "DAY_AHEAD"
 MARKET = "SDAC"
+MARKET_IE = "SEM_DA"  # IE isn't SDAC - I-SEM's own day-ahead auction, see run_ie()
 DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/entsoe/day_ahead")
@@ -49,7 +50,7 @@ def fetch_day_ahead_prices(bidding_zone: str, date: dt.date) -> Optional[bytes]:
     return entsoe_fetch(params)
 
 
-def parse_response(raw: bytes, bidding_zone: str, forecasttime: pd.Timestamp) -> pd.DataFrame:
+def parse_response(raw: bytes, bidding_zone: str, forecasttime: pd.Timestamp, market: str = MARKET) -> pd.DataFrame:
     """parse one zone/day's ENTSO-E day-ahead price document into prod.prices-shaped rows."""
     document = xmltodict.parse(raw)
     market_document = document.get("Publication_MarketDocument")
@@ -97,7 +98,7 @@ def parse_response(raw: bytes, bidding_zone: str, forecasttime: pd.Timestamp) ->
                         "forecasttime": forecasttime,
                         "bidding_zone": bidding_zone,
                         "product": PRODUCT,
-                        "market": MARKET,
+                        "market": market,
                         "source": SOURCE,
                         "resolution": resolution_minutes,
                         "currency": currency,
@@ -107,7 +108,7 @@ def parse_response(raw: bytes, bidding_zone: str, forecasttime: pd.Timestamp) ->
     return pd.DataFrame(rows)
 
 
-def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
+def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date, market: str = MARKET) -> pd.DataFrame:
     forecasttime = pd.Timestamp.now(tz="UTC")
 
     frames = []
@@ -118,7 +119,7 @@ def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -
                 logger.warning("skipping %s %s: ENTSO-E fetch failed", bidding_zone, date.date())
                 continue
             try:
-                frames.append(parse_response(raw, bidding_zone, forecasttime))
+                frames.append(parse_response(raw, bidding_zone, forecasttime, market=market))
             except (KeyError, ValueError):
                 logger.error(
                     "skipping %s %s: failed to parse ENTSO-E response", bidding_zone, date.date(), exc_info=True
@@ -131,9 +132,9 @@ def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -
 
 def dump(df: pd.DataFrame) -> None:
     """write day-ahead prices to prod.prices via PriceStore."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for bidding_zone, zone_df in df.groupby("bidding_zone"):
-        zone_df.to_csv(OUTPUT_DIR / f"{bidding_zone}.csv", index=False)
+    # OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # for bidding_zone, zone_df in df.groupby("bidding_zone"):
+    #     zone_df.to_csv(OUTPUT_DIR / f"{bidding_zone}.csv", index=False)
 
     written = price_store.dump(df)
     logger.info("PriceStore.dump: wrote %d row(s) for ENTSO-E day-ahead", written)
@@ -162,14 +163,15 @@ def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) 
     return df
 
 
-# cron: */15 12-13 * * *  (CET/CEST; SEM-DA gate closure firm at 11:00 Irish time = 12:00 CET, results assumed shortly after - publish time not independently confirmed)
+# cron: */15 12-13 * * *  (CET/CEST; SEM-DA gate closure firm at 11:00 Irish time = 12:00 CET, results confirmed available same-day shortly after - unlike SEMO's static-reports catalog, ENTSO-E's IE feed has no publish lag, see project-overview.md SEMO section)
 @flow
 def run_ie(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
     """fetch ENTSO-E IE day-ahead prices and dump to prod.prices.
 
     IE isn't SDAC - I-SEM's separate SEM-DA auction, separate (earlier) publish time, own
     schedule. Split out from run() so its schedule doesn't wait on SDAC's later clearing,
-    and run() doesn't waste a call on IE while its own auction is still pending.
+    and run() doesn't waste a call on IE while its own auction is still pending. Labeled
+    market=MARKET_IE ("SEM_DA"), not MARKET ("SDAC") - see project-overview.md Known gaps.
     from_date/to_date optional for historical backfill; defaults to tomorrow only.
     """
     setup_logging()
@@ -177,7 +179,7 @@ def run_ie(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = Non
     from_date = from_date or tomorrow
     to_date = to_date or tomorrow
 
-    df = fetch_and_parse(["IE"], from_date=from_date, to_date=to_date)
+    df = fetch_and_parse(["IE"], from_date=from_date, to_date=to_date, market=MARKET_IE)
     if df.empty:
         logger.warning("no ENTSO-E IE day-ahead data fetched for %s to %s", from_date, to_date)
         return df

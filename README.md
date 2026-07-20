@@ -13,6 +13,9 @@ supports them.
 - `core/` - shared `PriceStore` (dump/retrieve), logging, utils
 - `clients/<source>/client.py` - auth + generic request function for that source
 - `clients/<source>/endpoints/<name>.py` - fetch, parse, dump, `@flow`-decorated `run()`
+- `monitoring/` - `day_ahead_completeness.py`, a separate Prefect flow that checks every
+  in-scope zone landed data for a given delivery day (data completeness, not flow health)
+- `db/migrations/` - DDL for `prod.prices`
 
 ## Sources
 
@@ -31,14 +34,20 @@ Live and landing rows in `prod.prices`:
 Not started: CROPEX (HR), HUPX (HU), GME (IT), BSP Southpool (SI) - all gated
 behind paid/paperwork access, see `project-overview.md`.
 
-All 24 in-scope zones now have ≥2 live sources. IT remains uncovered (ENTSO-E
-excludes it due to its ~7-way sub-zone split; no other source built yet).
+31 of 34 in-scope zones have ≥2 live sources. HR, HU and SI are still on a
+single source (their local scraper isn't built yet); IT has zero (ENTSO-E
+excludes it due to its ~7-way sub-zone split, no other source built yet).
 
 ## Data
 
 Target table: `prod.prices`, keyed on
 `valuetime, forecasttime, bidding_zone, product, market, source`. See
 `project-overview.md` for the full schema and column descriptions.
+
+## Dependencies
+
+Poetry-managed (`pyproject.toml`/`poetry.lock`), own independent venv - not
+merged into Production's, see `project-overview.md`.
 
 ## Status
 

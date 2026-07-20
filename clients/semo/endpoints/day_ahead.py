@@ -18,7 +18,7 @@ price_store = PriceStore(engine)
 
 SOURCE = "SEMO"
 PRODUCT = "DAY_AHEAD"
-MARKET = "SDAC"
+MARKET = "SEM_DA"  # I-SEM's own day-ahead auction, not SDAC - see project-overview.md Known gaps
 BIDDING_ZONE = "IE"
 DEFAULT_CURRENCY = "EUR"
 
@@ -140,28 +140,37 @@ def fetch_and_parse(from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
 
 def dump(df: pd.DataFrame) -> None:
     """write day-ahead prices to prod.prices via PriceStore."""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    for bidding_zone, zone_df in df.groupby("bidding_zone"):
-        zone_df.to_csv(OUTPUT_DIR / f"{bidding_zone}.csv", index=False)
+    # OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # for bidding_zone, zone_df in df.groupby("bidding_zone"):
+    #     zone_df.to_csv(OUTPUT_DIR / f"{bidding_zone}.csv", index=False)
 
     written = price_store.dump(df)
     logger.info("PriceStore.dump: wrote %d row(s) for SEMO day-ahead", written)
 
 
-# cron: */15 12-13 * * *  (CET/CEST; SEM-DA gate closure firm at 11:00 Irish time = 12:00 CET, results assumed shortly after - publish time not independently confirmed)
+# cron: 5,20,35,50 1-2 * * *  (CET/CEST; SEMOpx's static-reports catalog batch-publishes each
+# document at Irish midnight ~= 01:00 CET/CEST the day after its "Date" field - confirmed via
+# the API's own PublishTime field, see run()'s docstring. Catch-up starts 01:05, every 15 min
+# for ~2h, per the project's standard catch-up pattern.)
 @flow
 def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
     """fetch SEMO (SEM day-ahead auction) prices and dump to prod.prices.
 
-    from_date/to_date optional for historical backfill; defaults to tomorrow only.
+    from_date/to_date optional for historical backfill; defaults to yesterday only.
+    yesterday, not tomorrow: SEMOpx's static-reports catalog only lists a document at Irish
+    midnight the day *after* its "Date" field (confirmed via the API's PublishTime field -
+    e.g. a SEM-DA document with Date=2026-07-19 carries PublishTime=2026-07-20T00:00). For
+    SEM-DA, Date is the delivery day, so on any given run day the newest delivery day actually
+    published is yesterday's - targeting tomorrow (as other day-ahead sources do) always
+    returns nothing.
     note: SEMO's static-reports API only retains roughly the last 12 months of published
     documents - DateRetention-filtered listings return nothing older than that, so this
     cannot backfill beyond that window.
     """
     setup_logging()
-    tomorrow = dt.date.today() + dt.timedelta(days=1)
-    from_date = from_date or tomorrow
-    to_date = to_date or tomorrow
+    yesterday = dt.date.today() - dt.timedelta(days=1)
+    from_date = from_date or yesterday
+    to_date = to_date or yesterday
 
     df = fetch_and_parse(from_date=from_date, to_date=to_date)
     if df.empty:
