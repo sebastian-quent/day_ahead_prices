@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
 import pandas as pd
@@ -10,25 +11,27 @@ from sqlalchemy.engine import Engine
 logger = logging.getLogger(__name__)
 
 TABLE = "prod.prices"
-PRIMARY_KEY = ["valuetime", "forecasttime", "bidding_zone", "product", "market", "source"]
-KEY_COLUMNS = ["valuetime", "bidding_zone", "product", "market", "source"]  # PK minus forecasttime
+PRIMARY_KEY = ["valuetime", "forecasttime", "bidding_zone", "market_type", "market", "source"]
+KEY_COLUMNS = ["valuetime", "bidding_zone", "market_type", "market", "source"]  # PK minus forecasttime
 VALUE_COLUMNS = ["resolution", "currency", "price"]
 COLUMNS = PRIMARY_KEY + VALUE_COLUMNS
 
 CHUNK_SIZE = 5000
 PRICE_DECIMALS = 2  # no source publishes finer than cent-level precision
 
-# same shared NATS endpoint + certs the "empire" producer uses (QUENTI_DATA_STREAMI/scrapers/empire/config.py) -
+# same shared NATS endpoint the "empire" producer uses (QUENTI_DATA_STREAMI/scrapers/empire/config.py) -
 # team-shared infra, not machine-specific, per team decision.
 _NATS_URL = "tls://192.168.1.202:4222"
-_CERTS_DIR = r"C:\Users\SebastianWiesner\PycharmProjects\Quent-Production\Scrapers\QUENTI_DATA_STREAMI"
+# ca-cert.pem only - server-auth TLS (ssl.Purpose.SERVER_AUTH), no client cert/key, so this is a public
+# CA cert, not a credential. checked into the repo so the module works out of the box for anyone.
+_CERTS_DIR = str(Path(__file__).parent / "certs")
 
 # own dedicated stream, not the shared DATA_PIPE (quent-data-stream gateway's quent.data.> catch-all was
 # getting cramped). decision 2026-07-17: this means events are NOT reachable via the gateway's
 # /replay, /ws, /hybrid routes unless/until the gateway is separately updated to also watch this stream -
 # accepted as fine for now. subject prefix drops the quent.data. namespace since we're no longer inside
 # the gateway's claimed filter.
-# named PRICES, not DAY_AHEAD_AUCTION/AUCTION_PRICES - product/market already carry the day-ahead vs
+# named PRICES, not DAY_AHEAD_AUCTION/AUCTION_PRICES - market_type/market already carry the day-ahead vs
 # intraday and auction vs continuous-VWAP distinctions per-event, so the stream name doesn't need to.
 _STREAM = "PRICES"
 _SUBJECT_PREFIX = "prices"
@@ -46,19 +49,19 @@ _INSERT_SQL = text(
 
 _LATEST_KNOWN_SQL = text(
     f"""
-    SELECT DISTINCT ON (valuetime, bidding_zone, product, market, source)
-        valuetime, bidding_zone, product, market, source, price
+    SELECT DISTINCT ON (valuetime, bidding_zone, market_type, market, source)
+        valuetime, bidding_zone, market_type, market, source, price
     FROM {TABLE}
     WHERE source IN :sources
-      AND product IN :products
+      AND market_type IN :market_types
       AND market IN :markets
       AND bidding_zone IN :bidding_zones
       AND valuetime BETWEEN :from_valuetime AND :to_valuetime
-    ORDER BY valuetime, bidding_zone, product, market, source, forecasttime DESC
+    ORDER BY valuetime, bidding_zone, market_type, market, source, forecasttime DESC
     """
 ).bindparams(
     bindparam("sources", expanding=True),
-    bindparam("products", expanding=True),
+    bindparam("market_types", expanding=True),
     bindparam("markets", expanding=True),
     bindparam("bidding_zones", expanding=True),
 )
@@ -69,7 +72,7 @@ class PriceStore:
 
     prices are append-only: a rescrape only inserts a new row (with a new forecasttime)
     when the price actually differs from the latest known value for that valuetime/
-    bidding_zone/product/market/source. an unchanged rescrape is skipped rather than
+    bidding_zone/market_type/market/source. an unchanged rescrape is skipped rather than
     written again, so forecasttime marks "when this price last changed", not "when we
     last checked". takes the shared engine as a constructor arg rather than building its
     own connection, e.g. `PriceStore(engine)` with `from Database.db_connect import engine`.
@@ -140,18 +143,18 @@ class PriceStore:
         return written
 
     def _publish(self, written: pd.DataFrame) -> None:
-        """publish written rows to quent-data-stream, one product group (=one subject) at a time.
+        """publish written rows to quent-data-stream, one market_type group (=one subject) at a time.
 
-        each group is isolated so a failure publishing one product doesn't block another.
+        each group is isolated so a failure publishing one market_type doesn't block another.
         """
-        for product, group in written.groupby("product"):
+        for market_type, group in written.groupby("market_type"):
             try:
                 asyncio.run(_publish_events(group, logger))
             except Exception:
                 logger.error(
-                    "PriceStore.dump: failed to publish %d row(s) for product=%s to quent-data-stream",
+                    "PriceStore.dump: failed to publish %d row(s) for market_type=%s to quent-data-stream",
                     len(group),
-                    product,
+                    market_type,
                     exc_info=True,
                 )
 
@@ -162,7 +165,7 @@ class PriceStore:
             self.engine,
             params={
                 "sources": df["source"].unique().tolist(),
-                "products": df["product"].unique().tolist(),
+                "market_types": df["market_type"].unique().tolist(),
                 "markets": df["market"].unique().tolist(),
                 "bidding_zones": df["bidding_zone"].unique().tolist(),
                 "from_valuetime": df["valuetime"].min(),
@@ -186,7 +189,7 @@ class PriceStore:
     def get(
         self,
         bidding_zone: Optional[str] = None,
-        product: Optional[str] = None,
+        market_type: Optional[str] = None,
         market: Optional[str] = None,
         source: Optional[str] = None,
         from_valuetime: Optional[pd.Timestamp] = None,
@@ -195,13 +198,13 @@ class PriceStore:
     ) -> pd.DataFrame:
         """retrieve price rows from prod.prices as a plain DataFrame (valuetime stays a column, not the index).
 
-        by default collapses to the latest forecasttime per valuetime/bidding_zone/product/market/source,
+        by default collapses to the latest forecasttime per valuetime/bidding_zone/market_type/market/source,
         i.e. the current known price curve. set latest_only=False for every scrape snapshot.
         """
         filters, params = [], {}
         for column, value in (
             ("bidding_zone", bidding_zone),
-            ("product", product),
+            ("market_type", market_type),
             ("market", market),
             ("source", source),
         ):
@@ -218,11 +221,11 @@ class PriceStore:
 
         if latest_only:
             query = f"""
-                SELECT DISTINCT ON (valuetime, bidding_zone, product, market, source)
+                SELECT DISTINCT ON (valuetime, bidding_zone, market_type, market, source)
                     {', '.join(COLUMNS)}
                 FROM {TABLE}
                 {where_clause}
-                ORDER BY valuetime, bidding_zone, product, market, source, forecasttime DESC
+                ORDER BY valuetime, bidding_zone, market_type, market, source, forecasttime DESC
             """
         else:
             query = f"""
@@ -245,21 +248,21 @@ def _require_utc(df: pd.DataFrame, column: str) -> None:
         raise ValueError(f"PriceStore.dump: column '{column}' must be tz-aware UTC, got dtype {dtype}")
 
 
-def _subject_for_product(product: str) -> str:
-    """one subject per product bucket (day_ahead, intraday, ...), shared across all zones/sources within it."""
-    return f"{_SUBJECT_PREFIX}.{product.lower()}.updates"
+def _subject_for_market_type(market_type: str) -> str:
+    """one subject per market_type bucket (day_ahead, intraday, ...), shared across all zones/sources within it."""
+    return f"{_SUBJECT_PREFIX}.{market_type.lower()}.updates"
 
 
-def _build_nats_config(product: str) -> NatsConfig:
+def _build_nats_config(market_type: str) -> NatsConfig:
     return NatsConfig(
         url=_NATS_URL,
         stream=_STREAM,
-        subject=_subject_for_product(product),
+        subject=_subject_for_market_type(market_type),
         certs_dir=_CERTS_DIR,
         connect_name="conn-producer-day-ahead-prices",
         # wildcard filter so the stream (created on first publish, quent_core's ensure_stream only
-        # passes subjects=[stream_subject_filter] on creation) covers every product's subject from
-        # the start, not just whichever product happens to publish first.
+        # passes subjects=[stream_subject_filter] on creation) covers every market_type's subject from
+        # the start, not just whichever market_type happens to publish first.
         stream_subjects=f"{_SUBJECT_PREFIX}.>",
     )
 
@@ -271,12 +274,12 @@ def _row_to_event(row: Any, subject: str) -> dict[str, Any]:
         "subject": subject,
         "source_system": _SOURCE_SYSTEM,
         "source": row.source,
-        "event_type": f"{row.product.lower()}_price",
+        "event_type": f"{row.market_type.lower()}_price",
         "valuetime": row.valuetime.isoformat(),
         "snapshot_time": row.forecasttime.isoformat(),
         "data": {
             "bidding_zone": row.bidding_zone,
-            "product": row.product,
+            "market_type": row.market_type,
             "market": row.market,
             "resolution": row.resolution,
             "currency": row.currency,
@@ -291,13 +294,13 @@ def _build_msg_id(subject: str, row: Any) -> str:
     quent_core requires an explicit msg_id but doesn't derive one for us. subject:valuetime alone
     isn't enough here - every zone/source/market sharing one subject also shares valuetime within
     the same dump() batch, so use the full natural key instead (same columns as
-    PriceStore.KEY_COLUMNS plus product).
+    PriceStore.KEY_COLUMNS plus market_type).
     """
-    return f"{subject}:{row.valuetime.isoformat()}:{row.bidding_zone}:{row.product}:{row.market}:{row.source}"
+    return f"{subject}:{row.valuetime.isoformat()}:{row.bidding_zone}:{row.market_type}:{row.market}:{row.source}"
 
 
 async def _publish_events(df: pd.DataFrame, logger: logging.Logger) -> None:
-    """publish one product-group of already-written prod.prices rows to quent-data-stream.
+    """publish one market_type-group of already-written prod.prices rows to quent-data-stream.
 
     connects, ensures the stream, publishes each row with an explicit msg_id, then closes.
     raises on failure - callers are responsible for catch-and-log so a NATS outage never
@@ -306,9 +309,9 @@ async def _publish_events(df: pd.DataFrame, logger: logging.Logger) -> None:
     if df.empty:
         return
 
-    product = df["product"].iat[0]
-    subject = _subject_for_product(product)
-    nats_cfg = _build_nats_config(product)
+    market_type = df["market_type"].iat[0]
+    subject = _subject_for_market_type(market_type)
+    nats_cfg = _build_nats_config(market_type)
 
     publisher = EventPublisher(nats_cfg, logger)
     try:

@@ -24,7 +24,7 @@ import streamlit as st
 from core import PriceStore
 from Database.db_connect import engine
 
-PRODUCT = "DAY_AHEAD"
+MARKET_TYPE = "DAY_AHEAD"
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Copenhagen")
 
 # same 41-zone list as monitoring/day_ahead_completeness.py, duplicated rather than shared via
@@ -54,7 +54,7 @@ def build_source_coverage(target_date: dt.date) -> pd.DataFrame:
     missing" list is computed separately against IN_SCOPE_ZONES.
     """
     start, end = _day_bounds_utc(target_date)
-    df = price_store.get(product=PRODUCT, from_valuetime=pd.Timestamp(start), to_valuetime=pd.Timestamp(end))
+    df = price_store.get(market_type=MARKET_TYPE, from_valuetime=pd.Timestamp(start), to_valuetime=pd.Timestamp(end))
     if df.empty:
         return pd.DataFrame(columns=["source", "bidding_zone", "actual", "expected"])
 

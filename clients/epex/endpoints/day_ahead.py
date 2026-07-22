@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 price_store = PriceStore(engine)
 
 SOURCE = "EPEX"
-PRODUCT = "DAY_AHEAD"
+MARKET_TYPE = "DAY_AHEAD"
 DEFAULT_CURRENCY = "EUR"
 
 OUTPUT_DIR = Path("output/epex/day_ahead")
@@ -180,14 +180,14 @@ def parse_csv(content: bytes, bidding_zone: str, zone: ZoneFile, resolution_minu
         valuetime=valuetime,
         forecasttime=forecasttime,
         bidding_zone=bidding_zone,
-        product=PRODUCT,
+        market_type=MARKET_TYPE,
         market=zone.market,
         source=SOURCE,
         resolution=resolution_minutes,
         currency=currency,
     )
 
-    columns = ["valuetime", "forecasttime", "bidding_zone", "product", "market", "source", "resolution", "currency", "price"]
+    columns = ["valuetime", "forecasttime", "bidding_zone", "market_type", "market", "source", "resolution", "currency", "price"]
     return df[columns].reset_index(drop=True)
 
 

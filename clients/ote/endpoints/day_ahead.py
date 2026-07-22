@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 price_store = PriceStore(engine)
 
 SOURCE = "OTE"
-PRODUCT = "DAY_AHEAD"
+MARKET_TYPE = "DAY_AHEAD"
 MARKET = "SDAC"
 BIDDING_ZONE = "CZ"
 DEFAULT_CURRENCY = "EUR"
@@ -70,7 +70,7 @@ def parse_response(items: list, forecasttime: pd.Timestamp) -> pd.DataFrame:
                 "valuetime": valuetime,
                 "forecasttime": forecasttime,
                 "bidding_zone": BIDDING_ZONE,
-                "product": PRODUCT,
+                "market_type": MARKET_TYPE,
                 "market": MARKET,
                 "source": SOURCE,
                 "resolution": resolution_minutes,

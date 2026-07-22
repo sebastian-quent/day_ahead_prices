@@ -1,4 +1,5 @@
 import logging
+import socket
 import time
 from functools import lru_cache
 from typing import Optional
@@ -14,6 +15,7 @@ PORT = 22
 
 RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SECONDS = 10
+CONNECT_TIMEOUT_SECONDS = 30  # paramiko.Transport applies no timeout to the raw TCP connect on its own
 
 _sftp: Optional[paramiko.SFTPClient] = None
 
@@ -33,7 +35,9 @@ def get_connection() -> paramiko.SFTPClient:
         except Exception:
             pass
     credentials = _get_credentials()
-    transport = paramiko.Transport((HOST, PORT))
+    sock = socket.create_connection((HOST, PORT), timeout=CONNECT_TIMEOUT_SECONDS)
+    sock.settimeout(None)  # back to blocking for the SSH session itself - only the connect is bounded
+    transport = paramiko.Transport(sock)
     transport.auth_timeout = 120
     transport.connect(username=credentials["username"], password=credentials["password"])
     _sftp = paramiko.SFTPClient.from_transport(transport)
@@ -44,11 +48,18 @@ def _with_retry(op, remote_path: str):
     """run op(sftp), retrying once after a fixed backoff on any SFTP failure -
     same one-retry policy as the HTTP clients. resets the cached connection before
     the retry attempt in case it's the connection itself that's gone bad.
+
+    FileNotFoundError is not retried - a missing file (e.g. a resolution that
+    doesn't exist for a given year, see fetch_day_ahead_file's fallback) is a
+    permanent result, not a transient failure, so retrying it only wastes a
+    full backoff sleep for a guaranteed second miss.
     """
     global _sftp
     for attempt in range(1, RETRY_ATTEMPTS + 1):
         try:
             return op(get_connection())
+        except FileNotFoundError:
+            return None
         except (paramiko.SSHException, IOError) as exc:
             if attempt < RETRY_ATTEMPTS:
                 logger.warning(

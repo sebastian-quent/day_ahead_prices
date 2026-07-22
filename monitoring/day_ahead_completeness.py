@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 price_store = PriceStore(engine)
 
-PRODUCT = "DAY_AHEAD"
+MARKET_TYPE = "DAY_AHEAD"
 
 DELIVERY_DAY_TZ = pytz.timezone("Europe/Copenhagen")
 
@@ -37,7 +37,7 @@ def _day_bounds_utc(date: dt.date) -> tuple[dt.datetime, dt.datetime]:
 def check_completeness(target_date: dt.date) -> list[str]:
     """return the sorted list of in-scope bidding zones with zero DAY_AHEAD rows for target_date."""
     start, end = _day_bounds_utc(target_date)
-    df = price_store.get(product=PRODUCT, from_valuetime=pd.Timestamp(start), to_valuetime=pd.Timestamp(end))
+    df = price_store.get(market_type=MARKET_TYPE, from_valuetime=pd.Timestamp(start), to_valuetime=pd.Timestamp(end))
     zones_with_data = set(df["bidding_zone"].unique())
     return sorted(set(IN_SCOPE_ZONES) - zones_with_data)
 

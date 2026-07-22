@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 price_store = PriceStore(engine)
 
 SOURCE = "ENTSOE"
-PRODUCT = "DAY_AHEAD"
+MARKET_TYPE = "DAY_AHEAD"
 MARKET = "SDAC"
 MARKET_IE = "SEM_DA"  # IE isn't SDAC - I-SEM's own day-ahead auction, see run_ie()
 DEFAULT_CURRENCY = "EUR"
@@ -97,7 +97,7 @@ def parse_response(raw: bytes, bidding_zone: str, forecasttime: pd.Timestamp, ma
                         "valuetime": valuetime.tz_convert("UTC"),
                         "forecasttime": forecasttime,
                         "bidding_zone": bidding_zone,
-                        "product": PRODUCT,
+                        "market_type": MARKET_TYPE,
                         "market": market,
                         "source": SOURCE,
                         "resolution": resolution_minutes,

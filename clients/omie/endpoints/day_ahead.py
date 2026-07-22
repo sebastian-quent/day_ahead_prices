@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 price_store = PriceStore(engine)
 
 SOURCE = "OMIE"
-PRODUCT = "DAY_AHEAD"
+MARKET_TYPE = "DAY_AHEAD"
 MARKET = "SDAC"
 DEFAULT_CURRENCY = "EUR"
 
@@ -72,7 +72,7 @@ def parse_file(content: bytes, date: dt.date, forecasttime: pd.Timestamp) -> pd.
                     "valuetime": valuetime,
                     "forecasttime": forecasttime,
                     "bidding_zone": bidding_zone,
-                    "product": PRODUCT,
+                    "market_type": MARKET_TYPE,
                     "market": MARKET,
                     "source": SOURCE,
                     "resolution": resolution_minutes,

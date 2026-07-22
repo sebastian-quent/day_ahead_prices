@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 price_store = PriceStore(engine)
 
-SOURCE = "Nord Pool"
-PRODUCT = "DAY_AHEAD"
+SOURCE = "NORDPOOL"
+MARKET_TYPE = "DAY_AHEAD"
 BIDDING_ZONE = "GB"
 NORDPOOL_AREA = "UK"
 MARKETS = ["N2EX_DayAhead", "GbHalfHour_DayAhead"]
@@ -51,7 +51,7 @@ def parse_response(raw: dict, forecasttime: pd.Timestamp, market: str) -> pd.Dat
                 "valuetime": delivery_start,
                 "forecasttime": forecasttime,
                 "bidding_zone": BIDDING_ZONE,
-                "product": PRODUCT,
+                "market_type": MARKET_TYPE,
                 "market": market,
                 "source": SOURCE,
                 "resolution": resolution_minutes,

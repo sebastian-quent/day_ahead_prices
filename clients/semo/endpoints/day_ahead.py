@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 price_store = PriceStore(engine)
 
 SOURCE = "SEMO"
-PRODUCT = "DAY_AHEAD"
+MARKET_TYPE = "DAY_AHEAD"
 MARKET = "SEM_DA"  # I-SEM's own day-ahead auction, not SDAC - see project-overview.md Known gaps
 BIDDING_ZONE = "IE"
 DEFAULT_CURRENCY = "EUR"
@@ -106,7 +106,7 @@ def parse_document(doc: dict) -> pd.DataFrame:
             "valuetime": pd.Timestamp(ts),
             "forecasttime": forecasttime,
             "bidding_zone": BIDDING_ZONE,
-            "product": PRODUCT,
+            "market_type": MARKET_TYPE,
             "market": MARKET,
             "source": SOURCE,
             "resolution": resolution_minutes,
