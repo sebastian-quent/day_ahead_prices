@@ -1,6 +1,7 @@
 """One-off historical backfill: 2024-01-01 (or each source's own documented floor) through
-yesterday, across every day-ahead source. Dumps to prod.prices only - every dump() call below
-passes publish=False explicitly, so none of this replays onto the live NATS stream.
+yesterday, across every day-ahead source. Dumps to prod.prices only - PriceStore doesn't
+publish to quent-data-stream yet (streaming support is being reworked upstream, see
+project-overview.md > Streaming), so there's currently nothing to suppress here.
 
 Run manually, not scheduled: `poetry run python scripts/backfill_2024.py`.
 See project-overview.md > Cross-cutting > Historical backfill for the per-source floor reasoning.
@@ -46,7 +47,7 @@ def dump_chunk(price_store, df: pd.DataFrame, label: str) -> None:
         logger.info("%s: no rows fetched", label)
         return
     try:
-        written = price_store.dump(df, publish=False)
+        written = price_store.dump(df)
         logger.info("%s: wrote %d/%d row(s)", label, written, len(df))
     except Exception:
         logger.error("%s: dump failed", label, exc_info=True)
@@ -81,11 +82,12 @@ def backfill_opcom():
 
 
 def backfill_omie():
-    from clients.omie.endpoints.day_ahead import fetch_and_parse, price_store
+    from clients.omie.endpoints.day_ahead import PRICE_COLUMN_TO_ZONE, fetch_and_parse, price_store
 
+    zones = list(PRICE_COLUMN_TO_ZONE.values())
     from_date, to_date = dt.date(2024, 1, 1), YESTERDAY
     for chunk_start, chunk_end in iter_month_chunks(from_date, to_date):
-        df = fetch_and_parse(chunk_start, chunk_end)
+        df = fetch_and_parse(zones, chunk_start, chunk_end)
         dump_chunk(price_store, df, f"OMIE {chunk_start}..{chunk_end}")
 
 
@@ -108,12 +110,13 @@ def backfill_semo():
 
 
 def backfill_nordpool():
-    from clients.nordpool.endpoints.day_ahead import fetch_and_parse, price_store
+    from clients.nordpool.endpoints.day_ahead import BIDDING_ZONE_TO_NORDPOOL_AREA, fetch_and_parse, price_store
 
     # deliberately not 2024-01-01: anything older than the ~2-month rolling window is a
     # guaranteed 401 that still burns a 10s retry sleep per request for no benefit.
+    zones = list(BIDDING_ZONE_TO_NORDPOOL_AREA)
     from_date, to_date = YESTERDAY - dt.timedelta(days=60), YESTERDAY
-    df = fetch_and_parse(from_date, to_date)
+    df = fetch_and_parse(zones, from_date, to_date)
     dump_chunk(price_store, df, f"NORDPOOL {from_date}..{to_date}")
 
 

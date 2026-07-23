@@ -29,4 +29,4 @@ streamlit = "~=1.43.0"
 
 [tool.poetry.dependencies.quent_core]
 git = "https://github.com/peter-quent/Core.git"
-rev = "v1.0.159-streaming-functions"
+rev = "v1.0.161-seb-database-functions"

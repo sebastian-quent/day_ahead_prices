@@ -40,7 +40,7 @@ def _day_bounds_utc(date: dt.date) -> tuple[dt.datetime, dt.datetime]:
     return start, end
 
 
-def parse_file(content: bytes, date: dt.date, forecasttime: pd.Timestamp) -> pd.DataFrame:
+def parse_file(content: bytes, date: dt.date, forecasttime: pd.Timestamp, bidding_zones: list) -> pd.DataFrame:
     """parse one marginalpdbcpt daily file into prod.prices-shaped rows for ES and PT.
 
     file shape: a "MARGINALPDBCPT;" header line, then one
@@ -67,6 +67,8 @@ def parse_file(content: bytes, date: dt.date, forecasttime: pd.Timestamp) -> pd.
         position = int(fields[3])
         valuetime = pd.Timestamp(day_start) + pd.Timedelta(minutes=(position - 1) * resolution_minutes)
         for column, bidding_zone in PRICE_COLUMN_TO_ZONE.items():
+            if bidding_zone not in bidding_zones:
+                continue
             rows.append(
                 {
                     "valuetime": valuetime,
@@ -83,7 +85,7 @@ def parse_file(content: bytes, date: dt.date, forecasttime: pd.Timestamp) -> pd.
     return pd.DataFrame(rows)
 
 
-def fetch_and_parse(from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
+def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
     files = list_files(REALDIR, DIR_LABEL, PARENTS)
     if files is None:
         logger.warning("skipping OMIE %s to %s: could not list published files", from_date, to_date)
@@ -104,7 +106,7 @@ def fetch_and_parse(from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
             continue
 
         try:
-            df = parse_file(content, date, forecasttime)
+            df = parse_file(content, date, forecasttime, bidding_zones)
         except (ValueError, IndexError, UnicodeDecodeError):
             logger.error("skipping OMIE %s: failed to parse %s", date, filename, exc_info=True)
             continue
@@ -128,17 +130,23 @@ def dump(df: pd.DataFrame) -> None:
 
 # cron: */15 13-14 * * *  (CET/CEST; SDAC clears ~12:55 CET/CEST, catch-up starts 13:00)
 @flow
-def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
+def run(
+    bidding_zones: Optional[list] = None, from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None
+) -> pd.DataFrame:
     """fetch OMIE (MIBEL day-ahead auction) prices for ES and PT and dump to prod.prices.
 
+    bidding_zones optional, defaults to [ES, PT] - the underlying file always covers both
+    (one joint MIBEL auction file per day), so passing a subset only narrows what gets
+    parsed/dumped, not what gets downloaded.
     from_date/to_date optional for historical backfill; defaults to tomorrow only.
     """
     setup_logging()
     tomorrow = dt.date.today() + dt.timedelta(days=1)
     from_date = from_date or tomorrow
     to_date = to_date or tomorrow
+    bidding_zones = bidding_zones or list(PRICE_COLUMN_TO_ZONE.values())
 
-    df = fetch_and_parse(from_date=from_date, to_date=to_date)
+    df = fetch_and_parse(bidding_zones, from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no OMIE day-ahead data fetched for %s to %s", from_date, to_date)
         return df

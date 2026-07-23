@@ -10,7 +10,7 @@ supports them.
 
 ## Layout
 
-- `core/` - shared `PriceStore` (dump/retrieve, plus publish to `quent-data-stream`), logging, utils
+- `core/` - logging, utils; `PriceStore` (dump/retrieve) now lives in `quent_core`
 - `clients/<source>/client.py` - auth + generic request function for that source
 - `clients/<source>/endpoints/<name>.py` - fetch, parse, dump, `@flow`-decorated `run()`
 - `monitoring/` - `day_ahead_completeness.py` (Prefect flow, zone-level data-completeness
@@ -19,9 +19,10 @@ supports them.
 - `db/migrations/` - DDL for `prod.prices`
 - `scripts/` - one-off backfill/verification drivers, not scheduled
 
-Every row `PriceStore.dump()` writes is also published to `quent-data-stream` (NATS
-JetStream, stream `PRICES`) - see `project-overview.md` for details. `publish=False`
-disables this per instance or per call, e.g. for backfills.
+`PriceStore` (from `quent_core.database.price_store`) writes to `prod.prices` only for
+now - publishing to `quent-data-stream` (NATS JetStream, stream `PRICES`) moved to
+`quent_core` along with the class and is temporarily disabled while that module is
+reworked upstream; see `project-overview.md` > Streaming for details.
 
 ## Sources
 

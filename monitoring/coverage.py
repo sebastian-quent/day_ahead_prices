@@ -36,7 +36,7 @@ IN_SCOPE_ZONES = [
     "SE1", "SE2", "SE3", "SE4", "SI", "SK",
 ]
 
-price_store = PriceStore(engine, publish=False)
+price_store = PriceStore(engine)
 
 
 def _day_bounds_utc(date: dt.date) -> tuple[dt.datetime, dt.datetime]:

@@ -142,19 +142,24 @@ def dump(df: pd.DataFrame) -> None:
 
 # cron: */15 13-14 * * *  (CET/CEST; SDAC clears ~12:55 CET/CEST, catch-up starts 13:00)
 @flow
-def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
+def run(
+    bidding_zones: Optional[list] = None, from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None
+) -> pd.DataFrame:
     """fetch ENTSO-E SDAC day-ahead prices and dump to prod.prices.
 
-    IE is excluded - separate (non-SDAC) auction, own schedule, see run_ie().
+    bidding_zones optional, defaults to every SDAC zone this flow covers (all of
+    BIDDING_ZONE_TO_ENTSOE_AREA except IE) - pass a subset (e.g. ["NO1"]) to re-run/backfill
+    just that zone without looping over the rest. IE is excluded from the default -
+    separate (non-SDAC) auction, own schedule, see run_ie().
     from_date/to_date optional for historical backfill; defaults to tomorrow only.
     """
     setup_logging()
     tomorrow = dt.date.today() + dt.timedelta(days=1)
     from_date = from_date or tomorrow
     to_date = to_date or tomorrow
+    bidding_zones = bidding_zones or [zone for zone in BIDDING_ZONE_TO_ENTSOE_AREA if zone != "IE"]
 
-    zones = [zone for zone in BIDDING_ZONE_TO_ENTSOE_AREA if zone != "IE"]
-    df = fetch_and_parse(zones, from_date=from_date, to_date=to_date)
+    df = fetch_and_parse(bidding_zones, from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no ENTSO-E day-ahead data fetched for %s to %s", from_date, to_date)
         return df

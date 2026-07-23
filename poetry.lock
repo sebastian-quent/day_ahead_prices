@@ -2146,22 +2146,6 @@ sql = ["narwhals[duckdb]", "sqlparse (>=0.5.5)"]
 sqlframe = ["sqlframe (>=3.22.0,!=3.39.3)"]
 
 [[package]]
-name = "nats-py"
-version = "2.12.0"
-description = "NATS client for Python"
-optional = false
-python-versions = ">=3.7"
-groups = ["main"]
-files = [
-    {file = "nats_py-2.12.0.tar.gz", hash = "sha256:2981ca4b63b8266c855573fa7871b1be741f1889fd429ee657e5ffc0971a38a1"},
-]
-
-[package.extras]
-aiohttp = ["aiohttp"]
-fast-parse = ["fast-mail-parser"]
-nkeys = ["nkeys"]
-
-[[package]]
 name = "numba"
 version = "0.61.2"
 description = "compiling Python code using LLVM"
@@ -3695,7 +3679,7 @@ files = [
 
 [[package]]
 name = "quent-core"
-version = "1.0.159"
+version = "1.0.160"
 description = ""
 optional = false
 python-versions = ">=3.12,<4.0"
@@ -3708,7 +3692,6 @@ asyncpg = ">=0.30.0,<0.31.0"
 boto3 = ">=1.42.79,<1.43.0"
 croniter = ">=5.0.0,<6.0.0"
 energyquantified = ">=0.13.12"
-nats-py = ">=2.12.0,<2.13.0"
 numba = ">=0.61.0,<0.62.0"
 numpy = ">=2.2.3,<3.0.0"
 pandas = ">=2.0.0"
@@ -3728,8 +3711,8 @@ websockets = ">=13.0.1,<14.0.0"
 [package.source]
 type = "git"
 url = "https://github.com/peter-quent/Core.git"
-reference = "v1.0.159-streaming-functions"
-resolved_reference = "d42834db64735e9a44b3bd1faefe9f586d362765"
+reference = "v1.0.161-seb-database-functions"
+resolved_reference = "7fb1c60cdf43046bba170fe7e7dfac67a4dc95cb"
 
 [[package]]
 name = "readchar"
@@ -4921,4 +4904,4 @@ type = ["pytest-mypy (>=1.0.1) ; platform_python_implementation != \"PyPy\""]
 [metadata]
 lock-version = "2.1"
 python-versions = "==3.12.9"
-content-hash = "121df2c35cd159a94a05ea3e2800dfb36db8d0d6c5f4b681fb9f1dabc33e0499"
+content-hash = "1d23355f901f5414ce3fdb686434044b87753881ec05698b0e44bf62b478a73a"

@@ -19,21 +19,20 @@ Redundancy requirement: at least **two independent sources per bidding zone**, s
 - `clients/<source>/` — one folder per data source (nordpool, epex, entsoe, cropex, ote, ...):
   - `client.py` — auth + HTTP request handling only, no parsing.
   - `config.py` — source-specific config/secrets.
-  - `endpoints/<endpoint>.py` — fetch, parse, dump per endpoint. Also hosts the `@flow`-decorated `run()`, with backfill exposed via an optional date/range param. The per-zone CSV dump that used to run alongside the DB write is commented out (not deleted) in every endpoint, kept available to uncomment for manual debugging/cross-checking.
+  - `endpoints/<endpoint>.py` — fetch, parse, dump per endpoint. Also hosts the `@flow`-decorated `run()`, with backfill exposed via optional `bidding_zones`/date-range params (2026-07-23: `bidding_zones` made consistent across every flow, see below). The per-zone CSV dump that used to run alongside the DB write is commented out (not deleted) in every endpoint, kept available to uncomment for manual debugging/cross-checking.
+- **Consistent `bidding_zones` param (multi-zone flows only)**: `fetch_and_parse(bidding_zones, from_date, to_date, ...)` and `run(bidding_zones=None, from_date=None, to_date=None)` share the same shape on **Nordpool's main `run()`, EPEX's main `run()`, ENTSO-E's main `run()`, and OMIE** — the four flows that each cover more than one zone. A subset (e.g. `run(bidding_zones=["NO1"])`) re-runs/backfills just that zone without looping over the rest — the pattern `scripts/backfill_no1_no2_gap.py` already used for EPEX/ENTSO-E, now also on Nordpool and OMIE. `run()`'s default (`bidding_zones=None`) reproduces the flow's normal full zone list, so the live scheduled behavior is unchanged. Nordpool's `deliveryArea`/EPEX's per-zone file/ENTSO-E's per-zone request mean a subset genuinely fetches less; OMIE's joint ES+PT file is still fetched in full regardless, so a subset there only narrows what gets parsed/dumped. Every single-zone flow (OTE, SEMO, OPCOM, OKTE, ENEX, plus Nordpool's/EPEX's/ENTSO-E's separate GB/IE flows) deliberately does **not** carry this param — there's nothing to subset when the flow only ever covers its one zone, so `fetch_and_parse(from_date, to_date)`/`run(from_date=None, to_date=None)` stay as they were.
 - **Prefect**: `@flow` sits directly on each endpoint's `run()`. Logs go to Prefect so failures are visible without digging through server logs.
-- **Storage**: writes directly to Postgres via `core.PriceStore`, which also publishes every written row to `quent-data-stream` (see Streaming below).
-- **DB engine**: `from Database.db_connect import engine` — same shared engine as for example `ImbalancePriceHandler`. `core.PriceStore` takes this as a constructor arg rather than building its own connection.
-- **Dependencies**: Poetry-managed (`pyproject.toml`/`poetry.lock`), own independent `.venv` — not merged into Production's. Shared deps pinned to match Production's exactly; `quent_core` is the one deliberate deviation, pinned to `v1.0.159-streaming-functions` (Production is on `v1.0.158`) since the `streaming` module `core/price_store.py` depends on doesn't exist before that ref. `streamlit ~=1.43.0` added for `monitoring/coverage.py`.
+- **Storage**: writes directly to Postgres via `PriceStore` (see Dependencies — now sourced from `quent_core`, not this repo).
+- **DB engine**: `from Database.db_connect import engine` — same shared engine as for example `ImbalancePriceHandler`. `PriceStore` takes this as a constructor arg rather than building its own connection.
+- **Dependencies**: Poetry-managed (`pyproject.toml`/`poetry.lock`), own independent `.venv` — not merged into Production's. Shared deps pinned to match Production's exactly; `quent_core` is the one deliberate deviation, pinned to `v1.0.161-seb-database-functions` (Production is on `v1.0.158`). `PriceStore` moved out of this repo (`core/price_store.py` deleted) and now lives in `quent_core.database.price_store` — `core/__init__.py` re-exports it from there so every client's `from core import PriceStore` import is unchanged. `streamlit ~=1.43.0` added for `monitoring/coverage.py`.
 
 ## Streaming (quent-data-stream)
 
-`core/price_store.py` publishes every row `PriceStore.dump()` writes to Postgres onto a NATS JetStream stream (**`PRICES`**), so the data is trivially accessible to any future consumer — how anything consumes it is deliberately not decided yet (out of scope, see Scope). Producer only; doesn't touch the `quent-data-stream` gateway repo.
+Publishing to `quent-data-stream` is **not currently active** in this repo. The old `core/price_store.py` had a working NATS JetStream publish path (stream `PRICES`, subject `prices.<market_type>.updates`), but it was cut when `PriceStore` moved to `quent_core` — the ported `quent_core.database.price_store.PriceStore` is dump/retrieve only, no publish, since `quent_core`'s own streaming module is mid-rework and too unstable to build against right now (2026-07-23 decision). Ties back to `Goal`'s "how anything consumes it is deliberately not decided yet" — still true, now with no producer either.
 
-- **Subject**: one per `market_type`, not per source/zone — `prices.<market_type>.updates` (e.g. `prices.day_ahead.updates`). `INTRADAY` lands on the same stream/pattern later, no code change needed. Consumers filter zone/source/market client-side.
-- **Connection**: shared team infra, `tls://192.168.1.202:4222`; CA cert checked in at `core/certs/ca-cert.pem` (server-auth only, not a credential — safe to commit).
-- **Integration point**: centralized in `PriceStore.dump()` — every endpoint publishes for free. `publish=False` (constructor or per-call) disables it for local/dev work or backfills. Only rows that actually committed to Postgres are published; a NATS outage is caught/logged, never fails the DB write.
-- **Dedup key**: `_build_msg_id()` builds the full natural key (`subject:valuetime:bidding_zone:market_type:market:source`), not NATS's `subject:valuetime` default — needed because many rows share subject+valuetime within one `dump()` batch.
-- **Gateway-side gap**: `PRICES` isn't reachable via the gateway's `/replay`/`/ws`/`/hybrid` routes yet — consumers need a direct NATS connection for now. Tracked as quent-data-stream's problem, not this repo's — see that project's `gotchas-and-decisions.md` ("New producer streams aren't reachable via the gateway by default").
+- Expected to come back as a `quent_core`-side add-on once that rework lands, requiring only a minimal change here (passing a publish flag/config through, not re-implementing the NATS logic).
+- Until then: no `PRICES` stream, no NATS cert/config in this repo (`core/certs/` removed), no `publish=` parameter on `PriceStore`.
+- The previous dedup-key design (`_build_msg_id()` building the full natural key `subject:valuetime:bidding_zone:market_type:market:source`, not NATS's `subject:valuetime` default) and the gateway gap (`PRICES` not reachable via `/replay`/`/ws`/`/hybrid`) are notes for whenever publishing returns, not current behavior.
 
 ## Data model
 
@@ -57,7 +56,7 @@ Table: **`prod.prices`**.
 
 **Resolution**: most zones have moved to 15-minute settlement, some are still 30 or 60. Stored as plain integer minutes, read per response — never hardcoded per zone, since a zone can change resolution over time.
 
-`core.PriceStore.get()` collapses to the latest `forecasttime` per `valuetime`/zone/market_type/market/source, so consumers get the current price curve, not every scrape snapshot.
+`PriceStore.get()` collapses to the latest `forecasttime` per `valuetime`/zone/market_type/market/source, so consumers get the current price curve, not every scrape snapshot.
 
 **Dedup / rescrape strategy**: `PriceStore.dump()` is append-only, not upsert — it looks up the latest known price per key (one query per batch, not per row) and inserts a new row (new `forecasttime`) only when the price actually changed; unchanged rescrapes are skipped. `forecasttime` therefore means "when this price last changed", not "when we last checked" — true for both source-native forecasttime (e.g. EPEX file mtime) and `utcnow()` fallback sources alike. Comparison is price-only — resolution/currency changes alone don't trigger a new row. `ON CONFLICT DO NOTHING` on the full PK is kept only as a safety net against exact re-inserts (e.g. a retried failed run), not as the change-detection mechanism.
 
@@ -141,7 +140,7 @@ One entry per source: how it's implemented, and any source-side behavior that sh
 
 ## Historical backfill
 
-Backfilled to **2024-01-01** wherever a source can reach that far back; only **one** source per zone/day is required for backfill (the ≥2-sources rule is live-operation outage insurance, see Goal). Driven by the one-off `scripts/backfill_2024.py` (not scheduled, every `dump()` call passes `publish=False` so none of it replays onto NATS).
+Backfilled to **2024-01-01** wherever a source can reach that far back; only **one** source per zone/day is required for backfill (the ≥2-sources rule is live-operation outage insurance, see Goal). Driven by the one-off `scripts/backfill_2024.py` (not scheduled). No `publish=False` needed anymore — `PriceStore.dump()` doesn't publish anywhere right now (see Streaming).
 
 Verified with `scripts/verify_backfill.py` — a day-by-day gap scan across all 41 in-scope `bidding_zone` codes (not just MIN/MAX per zone, which can miss holes in the middle of an otherwise-normal-looking range). Re-run this after any future bulk backfill rather than trusting a clean exit code or MIN/MAX alone.
 
@@ -196,6 +195,7 @@ A Prefect flow only fails on a code exception — correct for genuine errors, bu
 - CROPEX (HR), HUPX (HU), GME (IT), BSP Southpool (SI) — not started, blocked on paid/unconfirmed access (see Sources).
 - No Prefect deployment/schedule exists yet for any flow — design only (see Scheduling), including the monitoring flow.
 - Alert channel for `monitoring/day_ahead_completeness.py` (email vs. Teams) not decided — currently logs only.
+- Re-enable publishing to `quent-data-stream` once `quent_core`'s streaming rework lands (see Streaming) — expected as a small add-on to `quent_core.database.price_store.PriceStore`, not a rebuild.
 
 ## Not to forget later
 

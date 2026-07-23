@@ -64,9 +64,9 @@ def parse_response(raw: dict, forecasttime: pd.Timestamp) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def fetch_and_parse(from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
+def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
     forecasttime = pd.Timestamp.now(tz="UTC")
-    delivery_areas = list(BIDDING_ZONE_TO_NORDPOOL_AREA.values())
+    delivery_areas = [BIDDING_ZONE_TO_NORDPOOL_AREA[zone] for zone in bidding_zones]
 
     frames = []
     for date in pd.date_range(from_date, to_date, freq="D"):
@@ -96,17 +96,22 @@ def dump(df: pd.DataFrame) -> None:
 
 # cron: */15 13-14 * * *  (CET/CEST; SDAC clears ~12:55 CET/CEST, catch-up starts 13:00)
 @flow
-def run(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None) -> pd.DataFrame:
+def run(
+    bidding_zones: Optional[list] = None, from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = None
+) -> pd.DataFrame:
     """fetch Nord Pool day-ahead prices and dump to prod.prices.
 
+    bidding_zones optional, defaults to every zone Nord Pool covers - pass a subset (e.g.
+    ["NO1"]) to re-run/backfill just that zone without looping over the rest.
     from_date/to_date optional for historical backfill; defaults to tomorrow only.
     """
     setup_logging()
     tomorrow = dt.date.today() + dt.timedelta(days=1)
     from_date = from_date or tomorrow
     to_date = to_date or tomorrow
+    bidding_zones = bidding_zones or list(BIDDING_ZONE_TO_NORDPOOL_AREA)
 
-    df = fetch_and_parse(from_date=from_date, to_date=to_date)
+    df = fetch_and_parse(bidding_zones, from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no Nord Pool day-ahead data fetched for %s to %s", from_date, to_date)
         return df
