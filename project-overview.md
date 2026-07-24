@@ -26,7 +26,7 @@ Redundancy requirement: at least **two independent sources per bidding zone**, s
 - **DB engine**: `from Database.db_connect import engine` — same shared engine as for example `ImbalancePriceHandler`. `PriceStore` takes this as a constructor arg rather than building its own connection.
 - **Dependencies**: Poetry-managed (`pyproject.toml`/`poetry.lock`), own independent `.venv` — not merged into Production's. Shared deps pinned to match Production's exactly; `quent_core` is the one deliberate deviation, pinned to `v1.0.161-seb-database-functions` (Production is on `v1.0.158`). `PriceStore` moved out of this repo (`core/price_store.py` deleted) and now lives in `quent_core.database.price_store` — `core/__init__.py` re-exports it from there so every client's `from core import PriceStore` import is unchanged. `streamlit ~=1.43.0` added for `monitoring/coverage.py`.
 
-## Streaming (quent-data-stream)
+## Streaming (quent-data-stream)c
 
 Publishing to `quent-data-stream` is **not currently active** in this repo. The old `core/price_store.py` had a working NATS JetStream publish path (stream `PRICES`, subject `prices.<market_type>.updates`), but it was cut when `PriceStore` moved to `quent_core` — the ported `quent_core.database.price_store.PriceStore` is dump/retrieve only, no publish, since `quent_core`'s own streaming module is mid-rework and too unstable to build against right now (2026-07-23 decision). Ties back to `Goal`'s "how anything consumes it is deliberately not decided yet" — still true, now with no producer either.
 
@@ -185,6 +185,63 @@ A Prefect flow only fails on a code exception — correct for genuine errors, bu
 - `IN_SCOPE_ZONES` duplicated from `monitoring/day_ahead_completeness.py` rather than shared via `core/` — same reasoning as that module, now with a second consumer.
 - Sources are whatever `source` values actually appear that day, not a static per-zone expected list — a new source landing data shows up with no code change.
 - **Known limitation, by design for now**: reads `prod.prices` only, so it shows *whether* data is in, not *why* it's missing (a source erroring vs. simply not having published yet look identical) — e.g. SEMO/IE's day-later batch publish will show as red without being a real gap. A logs-based system with actual run/error status is a separate, later piece of work; this dashboard would plug into that as an additional data source.
+
+**`monitoring/zone_map/`** — standalone FastAPI + plain-JS map dashboard (run with
+`poetry run uvicorn monitoring.zone_map.app:app --reload`), not Streamlit — built to show
+coverage and price level geographically rather than as a chip/text list. Has its own day picker
+(prev/next arrows + a native date input; no longer locked to tomorrow-only). Each of the 41
+`IN_SCOPE_ZONES` is drawn as its real bidding-zone shape (not just a country outline — NO1-5,
+SE1-4, DK1/DK2, and Italy's 7 sub-zones each get their own polygon). Default view is just the
+zone code + price; hover for a card with the per-source completeness breakdown and a price
+curve chart, to stay minimal.
+- **Fill color is price-intensity, not just "has data"**: zones are colored on a per-day
+  green (cheap) → amber → red (expensive) scale, normalized against that day's own min/max
+  across zones (not a fixed absolute scale — day-ahead levels swing too much day to day for a
+  fixed scale to stay informative). Zones with no data yet are off-white/dashed, clearly
+  distinct from "cheap".
+- **Currency correctness matters here**: only zones actually priced in EUR feed that scale.
+  Checked against real landed data (not assumed from the `currency` column's stated possible
+  values) - in practice every SDAC/SEM_DA zone lands in EUR, *including* CH and the Nordics
+  (their day-ahead auction clears in EUR even though NOK/CHF is the local retail currency);
+  only GB (N2EX/GbHalfHour, not SDAC) actually lands in GBP. Non-EUR zones get a distinct
+  muted (not green/amber/red, not the pending off-white) fill instead of being silently mixed
+  into the EUR scale, since there's no FX conversion anywhere in this repo (see Data model) and
+  comparing raw GBP numbers against EUR ones would misrepresent price level.
+- The hover card's curve section is a small hand-rolled inline SVG sparkline (no charting
+  library — this repo has no bundler, and Leaflet is already vendored rather than CDN'd for the
+  same offline-friendly reason), not a scrollable list of every settlement period - a shape
+  reads faster than 96 numbers. Built from whichever `(source, market)` landed the most periods
+  that zone/day ("primary", picked per-request - no fixed per-zone source priority exists yet,
+  see Scheduling's "not yet decided" note).
+- `zones.py` mirrors `coverage.py`'s `by_market` groupby (source+market first, not straight to
+  source+zone) for the same GB mixed-resolution reason, then averages those per-source averages
+  for one headline "baseload" price per zone — avoids a naive row-mean letting GB's half-hourly
+  market (2x the row count of its hourly market) skew the number shown on the map.
+- `IN_SCOPE_ZONES` and `_day_bounds_utc()` duplicated again (3rd/5th copy respectively) — same
+  precedent as `coverage.py`/`day_ahead_completeness.py`.
+- Zone/context polygons are pre-built, static files (`static/geo/zones.geojson`,
+  `static/geo/context.geojson`), not fetched live — `build_geo.py` is a one-off script (not run
+  by the app) that combines `EnergieID/entsoe-py`'s per-bidding-zone shapes (MIT license; no
+  GB/IE, matches this repo's own note that GB has no ENTSO-E area) with Natural Earth's
+  public-domain admin-0 country outlines for GB/IE and the grey context layer. `context.geojson`
+  covers the *whole world*, not just Europe — the map's own `maxBounds`/`minZoom` (in
+  `static/app.js`, not the geo build) are what actually keep the camera to a European view;
+  clipping the data itself to a Europe bbox was tried first but made the initial view's aspect
+  ratio look cut off at the edges (flat empty background where the bbox ended) - real grey
+  landmass under a restricted camera looks intentional instead. Re-run the build script only if
+  upstream shapes change.
+- Leaflet vendored locally under `static/vendor/leaflet/` (BSD-2-Clause) rather than a CDN, so
+  the page has no runtime internet dependency.
+- **`static/geo/grid.geojson`** — Europe's high-voltage transmission lines, rendered as an
+  intentionally faint background layer (easter egg, not meant to be noticed at a glance).
+  Source: GridKit (github.com/PyPSA/GridKit), an OpenStreetMap `power=line` extraction published
+  on Zenodo under **ODbL 1.0**. Extracted 2016 — stale for anything analytical, fine for a
+  decoration since transmission backbone topology doesn't move fast. Each `links.csv` row ships
+  its own ready-to-use WKT `LINESTRING`, so `build_grid_geojson()` only parses, no vertex-table
+  join needed. ODbL requires attribution for the produced map (not full relicensing) — the
+  Leaflet attribution control is re-enabled (styled small/muted, not the stock look) and credits
+  all three geo sources (entsoe-py, Natural Earth, OpenStreetMap/GridKit) via each layer's own
+  `attribution:` option rather than one hand-built string.
 
 ## Open items
 

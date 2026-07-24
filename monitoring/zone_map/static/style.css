@@ -1,0 +1,444 @@
+:root {
+  --brand: #77bd46;
+  --brand-dark: #5c9636;
+  --nodata-fill: #f3f1ea;
+  --nodead-stroke: #b8b2a0;
+  --context-fill: #dedcd3;
+  --context-stroke: #c9c6ba;
+  --bg: #fbfaf7;
+  --map-bg-inner: #f3f1ea;
+  --map-bg-outer: #e9e6dc;
+  --text: #232323;
+  --text-muted: #6b6b6b;
+  --card-bg: #ffffff;
+  --card-border: #e2e0d8;
+  --label-bg: rgba(255, 255, 255, 0.82);
+  --control-bg: rgba(255, 255, 255, 0.7);
+  --noneur-fill: #c7d3e0;
+  --noneur-stroke: #94a7ba;
+  --grid-line: rgba(170, 130, 55, 0.3);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --brand-dark: #96d666;
+    --nodata-fill: #2a2a28;
+    --nodead-stroke: #45433c;
+    --context-fill: #212120;
+    --context-stroke: #2c2b28;
+    --bg: #15150f;
+    --map-bg-inner: #1c1c17;
+    --map-bg-outer: #0f0f0c;
+    --text: #eceae4;
+    --text-muted: #9a9890;
+    --card-bg: #201f1c;
+    --card-border: #35342e;
+    --label-bg: rgba(21, 21, 15, 0.78);
+    --control-bg: rgba(32, 31, 28, 0.7);
+    --noneur-fill: #3a4a5a;
+    --noneur-stroke: #5a7188;
+    --grid-line: rgba(210, 175, 100, 0.22);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- header ---------- */
+
+header {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 20px;
+  flex: 0 0 auto;
+  padding: 12px 24px;
+  background: var(--bg);
+  box-shadow: 0 1px 0 var(--card-border), 0 6px 16px -8px rgba(0, 0, 0, 0.18);
+  z-index: 500;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.brand-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 25%, transparent);
+  flex: 0 0 auto;
+}
+
+h1 {
+  font-size: 0.95rem;
+  font-weight: 650;
+  margin: 0;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.day-picker {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: center;
+  background: var(--nodata-fill);
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  padding: 4px;
+}
+
+.day-nav {
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.day-nav:hover {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+#date-input {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 4px 2px;
+  width: 128px;
+  text-align: center;
+}
+
+#date-input::-webkit-calendar-picker-indicator {
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  #date-input::-webkit-calendar-picker-indicator { filter: invert(1); }
+}
+
+.legend {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  margin-right: 5px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.swatch.pending {
+  background: var(--nodata-fill);
+  border: 1px solid var(--nodead-stroke);
+}
+
+.price-scale {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scale-bar {
+  width: 72px;
+  height: 7px;
+  border-radius: 4px;
+  background: linear-gradient(to right, rgb(86, 156, 92), rgb(214, 168, 62), rgb(190, 66, 66));
+}
+
+/* ---------- map ---------- */
+
+#map {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  background: radial-gradient(circle at 50% 38%, var(--map-bg-inner), var(--map-bg-outer));
+}
+
+.leaflet-container {
+  background: transparent;
+  font-family: inherit;
+}
+
+.loader {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  z-index: 1000;
+  transition: opacity 0.25s ease;
+}
+
+.loader.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loader-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid var(--card-border);
+  border-top-color: var(--brand);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.leaflet-control-zoom {
+  border: none !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15) !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+}
+
+.leaflet-control-zoom a {
+  background: var(--control-bg) !important;
+  color: var(--text) !important;
+  backdrop-filter: blur(6px);
+  border: none !important;
+}
+
+.leaflet-control-zoom a:hover {
+  background: color-mix(in srgb, var(--brand) 20%, var(--control-bg)) !important;
+}
+
+.leaflet-control-attribution {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text-muted) !important;
+  font-size: 9.5px !important;
+  opacity: 0.55;
+}
+
+.leaflet-control-attribution a { color: var(--text-muted) !important; }
+
+/* permanent zone code + price label */
+.zone-label {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.zone-label::before { display: none; }
+
+.zone-chip {
+  background: var(--label-bg);
+  backdrop-filter: blur(3px);
+  border-radius: 7px;
+  padding: 2px 7px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
+  text-align: center;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.zone-chip .zone-code {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.zone-chip .price {
+  display: block;
+  font-weight: 500;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- hover card ---------- */
+
+.source-tooltip {
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-left: 3px solid var(--brand);
+  border-radius: 9px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  color: var(--text);
+  font-size: 12px;
+  padding: 10px 12px;
+  min-width: 190px;
+}
+
+.source-tooltip::before { display: none; }
+
+/* card grows in place via the .expanded modifier (toggled by the expand button below) - it
+   stays anchored to the same zone, Leaflet just repositions it around its new size. */
+.source-tooltip.expanded {
+  min-width: 380px;
+  padding: 22px 24px;
+}
+
+.source-tooltip .zone-title {
+  display: flex;
+  align-items: baseline;
+  font-weight: 700;
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+
+.source-tooltip.expanded .zone-title { font-size: 19px; margin-bottom: 6px; }
+
+.source-tooltip .zone-title .zone-name {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+
+.source-tooltip .expand-btn {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.source-tooltip .expand-btn:hover {
+  background: color-mix(in srgb, var(--brand) 20%, transparent);
+  color: var(--text);
+}
+
+.source-tooltip.expanded .expand-btn { font-size: 16px; }
+
+.source-tooltip .headline {
+  font-size: 15px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+
+.source-tooltip.expanded .headline { font-size: 30px; margin-bottom: 14px; }
+
+.source-tooltip .headline-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 6px;
+}
+
+.source-tooltip .empty-note {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.source-tooltip table {
+  border-collapse: collapse;
+}
+
+.source-tooltip.expanded table { font-size: 14px; }
+.source-tooltip.expanded td { padding: 3px 14px 3px 0; }
+
+.source-tooltip td {
+  padding: 1px 8px 1px 0;
+  white-space: nowrap;
+}
+
+.source-tooltip .status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 5px;
+}
+
+.source-tooltip .curve-heading {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--card-border);
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.source-tooltip.expanded .curve-heading { font-size: 13px; margin-top: 18px; padding-top: 10px; }
+
+.curve-chart {
+  display: block;
+  width: 100%;
+  height: 56px;
+  margin-top: 4px;
+}
+
+.source-tooltip.expanded .curve-chart { height: 240px; margin-top: 12px; }
+
+.chart-fill-a { stop-color: var(--brand); stop-opacity: 0.35; }
+.chart-fill-b { stop-color: var(--brand); stop-opacity: 0; }
+
+.chart-line {
+  fill: none;
+  stroke: var(--brand-dark);
+  stroke-width: 1.5;
+}
+
+.chart-dot { fill: var(--brand-dark); }
+
+.chart-zero {
+  stroke: var(--text-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2, 2;
+}
+
+.chart-minmax {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+
+.source-tooltip.expanded .chart-minmax { font-size: 12px; margin-top: 6px; }
+
+.source-tooltip {
+  transition: min-width 0.18s ease, padding 0.18s ease;
+}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Day-ahead zone map</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%2377bd46'/></svg>" />
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-dot"></span>
+      <h1>Day-ahead prices</h1>
+    </div>
+
+    <div class="day-picker">
+      <button id="prev-day" class="day-nav" aria-label="Previous day">&#8249;</button>
+      <input id="date-input" type="date" aria-label="Delivery day" />
+      <button id="next-day" class="day-nav" aria-label="Next day">&#8250;</button>
+    </div>
+
+    <div class="legend">
+      <div class="price-scale">
+        <span id="scale-min"></span>
+        <span class="scale-bar"></span>
+        <span id="scale-max"></span>
+      </div>
+      <span class="swatch pending"></span>pending
+    </div>
+  </header>
+
+  <div id="map">
+    <div id="loader" class="loader"><div class="loader-spinner"></div></div>
+  </div>
+
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

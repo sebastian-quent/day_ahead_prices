@@ -109,21 +109,41 @@ def parse_response(raw: bytes, bidding_zone: str, forecasttime: pd.Timestamp, ma
 
 
 def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date, market: str = MARKET) -> pd.DataFrame:
+    """fetch, parse, and dump ENTSO-E day-ahead prices one zone at a time.
+
+    dumping per zone (rather than once for the whole batch) means a single zone's fetch,
+    parse, or dump failure only costs that zone - already-completed zones keep their rows
+    in prod.prices, and remaining zones aren't blocked waiting on one that's slow or failing.
+    ENTSO-E's sequential per-zone-per-day calls can each take up to ~70s on a timeout+retry
+    (see client.py), so a full run() batch used to leave every zone's data unwritten for the
+    entire run - a single stuck zone looked indistinguishable from the whole flow hanging.
+    """
     forecasttime = pd.Timestamp.now(tz="UTC")
 
     frames = []
     for bidding_zone in bidding_zones:
+        zone_frames = []
         for date in pd.date_range(from_date, to_date, freq="D"):
             raw = fetch_day_ahead_prices(bidding_zone, date.date())
             if raw is None:
                 logger.warning("skipping %s %s: ENTSO-E fetch failed", bidding_zone, date.date())
                 continue
             try:
-                frames.append(parse_response(raw, bidding_zone, forecasttime, market=market))
+                zone_frames.append(parse_response(raw, bidding_zone, forecasttime, market=market))
             except (KeyError, ValueError):
                 logger.error(
                     "skipping %s %s: failed to parse ENTSO-E response", bidding_zone, date.date(), exc_info=True
                 )
+
+        if not zone_frames:
+            continue
+        zone_df = pd.concat(zone_frames, ignore_index=True)
+        try:
+            dump(zone_df)
+        except Exception:
+            logger.error("skipping dump for %s: PriceStore.dump failed", bidding_zone, exc_info=True)
+            continue
+        frames.append(zone_df)
 
     if not frames:
         return pd.DataFrame()
@@ -162,9 +182,6 @@ def run(
     df = fetch_and_parse(bidding_zones, from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no ENTSO-E day-ahead data fetched for %s to %s", from_date, to_date)
-        return df
-
-    dump(df)
     return df
 
 
@@ -187,9 +204,6 @@ def run_ie(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = Non
     df = fetch_and_parse(["IE"], from_date=from_date, to_date=to_date, market=MARKET_IE)
     if df.empty:
         logger.warning("no ENTSO-E IE day-ahead data fetched for %s to %s", from_date, to_date)
-        return df
-
-    dump(df)
     return df
 
 

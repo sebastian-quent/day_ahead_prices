@@ -192,12 +192,19 @@ def parse_csv(content: bytes, bidding_zone: str, zone: ZoneFile, resolution_minu
 
 
 def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -> pd.DataFrame:
+    """fetch, parse, and dump EPEX day-ahead prices one zone at a time.
+
+    dumping per zone (rather than once for the whole batch) means a single zone's SFTP fetch,
+    parse, or dump failure only costs that zone - already-completed zones keep their rows in
+    prod.prices, and remaining zones aren't blocked waiting on one that's slow or failing.
+    """
     years = sorted(set(range(from_date.year, to_date.year + 1)))
     window_start, _ = _day_bounds_utc(from_date)
     _, window_end = _day_bounds_utc(to_date)
 
     frames = []
     for bidding_zone in bidding_zones:
+        zone_frames = []
         for zone in ZONE_FILE_CONFIG[bidding_zone]:
             for year in years:
                 content, forecasttime, resolution_minutes = fetch_day_ahead_file(zone, year)
@@ -205,19 +212,31 @@ def fetch_and_parse(bidding_zones: list, from_date: dt.date, to_date: dt.date) -
                     logger.warning("skipping %s %s (%s) %s: EPEX fetch failed", bidding_zone, zone.market, zone.resolution_minutes, year)
                     continue
                 try:
-                    frames.append(parse_csv(content, bidding_zone, zone, resolution_minutes, forecasttime))
+                    zone_frames.append(parse_csv(content, bidding_zone, zone, resolution_minutes, forecasttime))
                 except (KeyError, ValueError):
                     logger.error(
                         "skipping %s %s (%s) %s: failed to parse EPEX file",
                         bidding_zone, zone.market, zone.resolution_minutes, year, exc_info=True,
                     )
 
+        if not zone_frames:
+            continue
+        zone_df = pd.concat(zone_frames, ignore_index=True)
+        zone_df = zone_df.loc[(zone_df["valuetime"] >= window_start) & (zone_df["valuetime"] < window_end)].reset_index(
+            drop=True
+        )
+        if zone_df.empty:
+            continue
+        try:
+            dump(zone_df)
+        except Exception:
+            logger.error("skipping dump for %s: PriceStore.dump failed", bidding_zone, exc_info=True)
+            continue
+        frames.append(zone_df)
+
     if not frames:
         return pd.DataFrame()
-    combined = pd.concat(frames, ignore_index=True)
-    return combined.loc[(combined["valuetime"] >= window_start) & (combined["valuetime"] < window_end)].reset_index(
-        drop=True
-    )
+    return pd.concat(frames, ignore_index=True)
 
 
 def dump(df: pd.DataFrame) -> None:
@@ -252,9 +271,6 @@ def run(
     df = fetch_and_parse(bidding_zones, from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no EPEX day-ahead data fetched for %s to %s", from_date, to_date)
-        return df
-
-    dump(df)
     return df
 
 
@@ -280,9 +296,6 @@ def run_gb(from_date: Optional[dt.date] = None, to_date: Optional[dt.date] = Non
     df = fetch_and_parse(["GB"], from_date=from_date, to_date=to_date)
     if df.empty:
         logger.warning("no EPEX GB day-ahead data fetched for %s to %s", from_date, to_date)
-        return df
-
-    dump(df)
     return df
 
 
